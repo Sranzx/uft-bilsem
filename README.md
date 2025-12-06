@@ -24,12 +24,17 @@ Bu araç, öğrencilerin akademik notlarını ve davranışsal gözlemlerini tak
 ### Ön Gereksinimler
 * **Python 3.8** veya üzeri
 * **[Ollama](https://ollama.com/)** (AI Modellerini çalıştırmak için),
+* Aşağıdaki **pip** paketleri
 ```python
 pip install rich
 pip install requests
 pip install streamlit
+pip install openai
+pip install anthropic
+pip install google.generativeai
+pip install fpdf
+pip install pandas
 ```
-* Yukarıdaki **pip** paketleri
 
 ### 1. Projeyi Klonlayın
 ```bash
