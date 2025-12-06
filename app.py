@@ -2,246 +2,206 @@ import streamlit as st
 import pandas as pd
 import json
 import time
-from student_streamable import StudentManager, AIService, Student, Grade, BehaviorNote
+
+# !!! DİKKAT: Dosya ismi değiştiği için import da güncellendi !!!
+from student_streamable import StudentManager, AIService, Student, Grade, BehaviorNote, Config
 
 # --- SAYFA AYARLARI ---
 st.set_page_config(
-    page_title="Ollama Student AI",
+    page_title="Öğrenci Analiz AI",
     page_icon="🎓",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- CSS İLE MODERN GÖRÜNÜM ---
+# --- STİL ---
 st.markdown("""
     <style>
-    .main {
-        background-color: #f8f9fa;
-    }
-    .stButton>button {
-        width: 100%;
-        border-radius: 10px;
-        height: 3em;
-        background-color: #4CAF50;
-        color: white;
-    }
-    .metric-card {
-        background-color: white;
-        padding: 20px;
-        border-radius: 10px;
-        box-shadow: 2px 2px 10px rgba(0,0,0,0.1);
-        text-align: center;
-    }
+    .main { background-color: #f8f9fa; }
+    .stButton>button { width: 100%; border-radius: 8px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- SESSION STATE (Önbellek) ---
+# --- SESSION STATE ---
 if 'manager' not in st.session_state:
     st.session_state.manager = StudentManager()
 if 'ai' not in st.session_state:
     st.session_state.ai = AIService()
 
 
-# --- YARDIMCI FONKSİYONLAR ---
+# --- YARDIMCI FONKSİYON ---
 def get_ai_stream(prompt, system_prompt):
-    """Ollama yanıtını Streamlit için generator'a dönüştürür"""
-    import requests
-    from student_streamable import Config
-
-    payload = {
-        "model": st.session_state.ai.model,
-        "prompt": prompt,
-        "system": system_prompt,
-        "stream": True,
-        "options": {"temperature": 0.3}
-    }
-
-    try:
-        with requests.post(f"{Config.OLLAMA_URL}/api/generate", json=payload, stream=True, timeout=120) as r:
-            for line in r.iter_lines():
-                if line:
-                    body = json.loads(line)
-                    token = body.get('response', '')
-                    yield token
-    except Exception as e:
-        yield f"Hata: {str(e)}"
+    """Backend'den gelen veri akışını Streamlit'e iletir"""
+    return st.session_state.ai.generate_streaming_response(prompt, system_prompt)
 
 
-# --- YAN MENÜ ---
+# --- YAN MENÜ (AYARLAR) ---
 with st.sidebar:
-    st.image("https://ollama.com/public/ollama.png", width=50)
-    st.title("Öğrenci Analiz")
+    st.title("🎓 Analiz AI")
     st.markdown("---")
 
+    # 1. SAĞLAYICI SEÇİMİ
+    st.subheader("⚙️ AI Motoru")
+    provider = st.selectbox(
+        "Sağlayıcı Seçin",
+        ["Ollama", "OpenAI", "Anthropic", "Google"],
+        index=0
+    )
+
+    api_key = None
+    model_name = "llama3.2"  # Varsayılan
+
+    # Seçime göre detay ayarlar
+    if provider == "Ollama":
+        model_name = st.text_input("Model Adı", value="llama3.2")
+        st.caption("Yerel çalışır. Ücretsizdir.")
+        status_icon = "🟢" if st.session_state.ai.check_connection() else "🔴"
+        st.markdown(f"Durum: {status_icon}")
+
+    elif provider == "OpenAI":
+        api_key = st.text_input("OpenAI API Key", type="password", placeholder="sk-...")
+        model_name = st.selectbox("Model", ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"])
+
+    elif provider == "Anthropic":
+        api_key = st.text_input("Anthropic API Key", type="password", placeholder="sk-ant-...")
+        model_name = st.selectbox("Model", ["claude-3-5-sonnet-20240620", "claude-3-opus-20240229"])
+
+    elif provider == "Google":
+        api_key = st.text_input("Gemini API Key", type="password", placeholder="AIza...")
+        model_name = st.selectbox("Model", ["gemini-1.5-flash", "gemini-1.5-pro"])
+
+    # Ayarları kaydet
+    st.session_state.ai.set_provider_config(provider, model_name, api_key)
+
+    st.markdown("---")
+
+    # 2. NAVİGASYON
     menu = st.radio(
         "Menü",
         ["📊 Dashboard", "➕ Yeni Öğrenci", "📝 Veri Girişi", "🤖 AI Analiz"]
     )
 
-    st.markdown("---")
-
-    # Bağlantı Durumu
-    if st.session_state.ai.is_connected:
-        st.success(f"🟢 Ollama Aktif\nModel: {st.session_state.ai.model}")
-    else:
-        st.error("🔴 Ollama Kapalı")
-        if st.button("Tekrar Dene"):
-            st.rerun()
-
 # --- SAYFA: DASHBOARD ---
 if menu == "📊 Dashboard":
-    st.title("🎓 Genel Bakış")
-
+    st.header("Genel Bakış")
     students = st.session_state.manager.get_all_students()
 
     if not students:
-        st.info("Henüz sisteme kayıtlı öğrenci yok. Yan menüden ekleyebilirsiniz.")
+        st.info("Kayıtlı öğrenci yok. 'Yeni Öğrenci' menüsünden ekleyin.")
     else:
-        # İstatistik Kartları
         col1, col2, col3 = st.columns(3)
+        col1.metric("Öğrenci Sayısı", len(students))
+        total_grades = sum(len(s.grades) for s in students)
+        col2.metric("Toplam Not", total_grades)
 
-        total_students = len(students)
-        total_grades = sum([len(s.grades) for s in students])
-
-        # Basit bir ortalama hesaplama
-        all_scores = [g.score for s in students for g in s.grades]
-        avg_score = sum(all_scores) / len(all_scores) if all_scores else 0
-
-        col1.metric("Toplam Öğrenci", total_students)
-        col2.metric("Toplam Girilen Not", total_grades)
-        col3.metric("Genel Not Ortalaması", f"{avg_score:.1f}")
-
-        st.markdown("### 📋 Öğrenci Listesi")
-
-        # Veriyi Tablo İçin Hazırla
+        # Tablo
         data = []
         for s in students:
-            s_avg = sum([g.score for g in s.grades]) / len(s.grades) if s.grades else 0
-            last_analysis = s.ai_insights[-1].date if s.ai_insights else "Yok"
+            avg = sum(g.score for g in s.grades) / len(s.grades) if s.grades else 0
+            last_ai = s.ai_insights[-1].date if s.ai_insights else "-"
             data.append({
                 "ID": s.id,
-                "İsim": s.name,
+                "Ad": s.name,
                 "Sınıf": s.class_name,
-                "Ortalama": f"{s_avg:.1f}",
-                "Not Sayısı": len(s.grades),
-                "Son Analiz": last_analysis
+                "Ortalama": f"{avg:.1f}",
+                "Son Analiz": last_ai
             })
-
-        df = pd.DataFrame(data)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True)
 
 # --- SAYFA: YENİ ÖĞRENCİ ---
 elif menu == "➕ Yeni Öğrenci":
-    st.title("👤 Yeni Öğrenci Ekle")
-
-    with st.form("new_student_form"):
-        col1, col2 = st.columns(2)
-        sid = col1.text_input("Öğrenci Numarası (ID)")
-        cls_name = col2.text_input("Sınıf")
+    st.header("Yeni Öğrenci Kaydı")
+    with st.form("add_student"):
+        c1, c2 = st.columns(2)
+        sid = c1.text_input("Öğrenci ID")
+        cls = c2.text_input("Sınıf")
         name = st.text_input("Ad Soyad")
 
-        submit = st.form_submit_button("Kaydet")
-
-        if submit:
-            if not sid or not name or not cls_name:
-                st.warning("Lütfen tüm alanları doldurun!")
-            elif st.session_state.manager.load_student(sid):
-                st.error("Bu ID ile kayıtlı bir öğrenci zaten var!")
-            else:
-                new_s = Student(id=sid, name=name, class_name=cls_name)
+        if st.form_submit_button("Kaydet"):
+            if st.session_state.manager.load_student(sid):
+                st.error("Bu ID zaten kayıtlı!")
+            elif sid and name:
+                new_s = Student(id=sid, name=name, class_name=cls)
                 st.session_state.manager.save_student(new_s)
-                st.success(f"{name} başarıyla sisteme eklendi!")
-                time.sleep(1)
+                st.success("Kaydedildi!")
+                time.sleep(0.5)
                 st.rerun()
+            else:
+                st.warning("Alanları doldurun.")
 
 # --- SAYFA: VERİ GİRİŞİ ---
 elif menu == "📝 Veri Girişi":
-    st.title("📝 Not ve Davranış Girişi")
-
+    st.header("Veri Girişi")
     students = st.session_state.manager.get_all_students()
-    student_names = [f"{s.id} - {s.name}" for s in students]
 
-    if not students:
-        st.warning("Önce öğrenci eklemelisiniz.")
-    else:
-        selected_s_str = st.selectbox("Öğrenci Seçin", student_names)
-        selected_id = selected_s_str.split(" - ")[0]
-        student = st.session_state.manager.load_student(selected_id)
+    if students:
+        s_names = [f"{s.id} - {s.name}" for s in students]
+        sel = st.selectbox("Öğrenci Seç", s_names)
+        curr_id = sel.split(" - ")[0]
+        student = st.session_state.manager.load_student(curr_id)
 
-        tab1, tab2 = st.tabs(["📚 Not Ekle", "🧠 Davranış Ekle"])
+        tab1, tab2 = st.tabs(["Not Ekle", "Davranış Ekle"])
 
         with tab1:
-            with st.form("grade_form"):
-                subject = st.text_input("Ders Adı (Örn: Matematik)")
-                score = st.number_input("Not", min_value=0, max_value=100, step=1)
-                if st.form_submit_button("Notu Kaydet"):
-                    student.grades.append(Grade(subject=subject, score=score))
+            with st.form("grade"):
+                sub = st.text_input("Ders")
+                sc = st.number_input("Not", 0, 100)
+                if st.form_submit_button("Not Ekle"):
+                    student.grades.append(Grade(subject=sub, score=sc))
                     st.session_state.manager.save_student(student)
-                    st.success("Not eklendi!")
+                    st.success("Eklendi")
 
         with tab2:
-            with st.form("behavior_form"):
-                note = st.text_area("Gözlem Notu")
-                b_type = st.selectbox("Tür", ["neutral", "positive", "negative"])
-                if st.form_submit_button("Gözlem Kaydet"):
-                    from student_streamable import BehaviorNote  # Tekrar import gerekebilir scope için
-
-                    student.behavior_notes.append(BehaviorNote(note=note, type=b_type))
+            with st.form("beh"):
+                note = st.text_area("Not")
+                typ = st.selectbox("Tür", ["neutral", "positive", "negative"])
+                if st.form_submit_button("Kaydet"):
+                    student.behavior_notes.append(BehaviorNote(note=note, type=typ))
                     st.session_state.manager.save_student(student)
-                    st.success("Davranış notu eklendi!")
+                    st.success("Eklendi")
+    else:
+        st.warning("Önce öğrenci ekleyin.")
 
 # --- SAYFA: AI ANALİZ ---
 elif menu == "🤖 AI Analiz":
-    st.title("🤖 Yapay Zeka Analizi")
+    st.header(f"AI Analiz ({st.session_state.ai.provider})")
 
     students = st.session_state.manager.get_all_students()
-    student_names = [f"{s.id} - {s.name}" for s in students]
+    if students:
+        s_names = [f"{s.id} - {s.name}" for s in students]
+        sel = st.selectbox("Analiz Edilecek Öğrenci", s_names)
+        curr_id = sel.split(" - ")[0]
+        student = st.session_state.manager.load_student(curr_id)
 
-    if not students:
-        st.warning("Listelenecek öğrenci yok.")
-    else:
-        col1, col2 = st.columns([1, 3])
-
-        with col1:
-            selected_s_str = st.radio("Öğrenci Seç", student_names)
-            selected_id = selected_s_str.split(" - ")[0]
-            student = st.session_state.manager.load_student(selected_id)
-
-            st.info(f"**{student.name}**\n\nNot Sayısı: {len(student.grades)}\nGözlem: {len(student.behavior_notes)}")
-
-            analyze_btn = st.button("Analizi Başlat ✨", type="primary")
-
-        with col2:
-            if analyze_btn:
-                if not st.session_state.ai.is_connected:
-                    st.error("Ollama bağlantısı yok! Lütfen 'ollama serve' komutunu çalıştırın.")
-                else:
-                    # Prompt Hazırlama
-                    student_data = st.session_state.ai.prepare_student_prompt(student)
-                    system_prompt = "Sen uzman bir pedagogsun. Öğrenci verilerini analiz et, Markdown formatında, yapıcı bir dille rapor sun."
-                    full_prompt = f"Veriler:\n{student_data}"
-
-                    # Streaming Alanı
-                    st.markdown("### 🧠 AI Raporu")
-                    report_container = st.container(border=True)
-
-                    # Streamlit'in kendi streaming fonksiyonu
-                    stream = get_ai_stream(full_prompt, system_prompt)
-                    response_text = report_container.write_stream(stream)
-
-                    # Kaydetme
-                    from student_streamable  import AIInsight
-
-                    student.ai_insights.append(AIInsight(analysis=response_text, model=st.session_state.ai.model))
-                    st.session_state.manager.save_student(student)
-                    st.toast("Analiz kaydedildi!", icon="✅")
-
-            # Eski raporları göster
-            elif student.ai_insights:
-                st.markdown("### 🕒 Son Analiz")
-                last_insight = student.ai_insights[-1]
-                with st.container(border=True):
-                    st.markdown(f"_{last_insight.date} - Model: {last_insight.model}_")
-                    st.markdown(last_insight.analysis)
+        if st.button("Analizi Başlat ✨", type="primary"):
+            # Kontroller
+            if st.session_state.ai.provider != "Ollama" and not st.session_state.ai.api_key:
+                st.error(f"{st.session_state.ai.provider} için API Key girmelisiniz (Sol Menü).")
             else:
-                st.markdown("Analysis başlatmak için butona tıklayın.")
+                prompt_data = st.session_state.ai.prepare_student_prompt(student)
+                system = "Sen uzman bir eğitim koçu ve pedagogsun. Öğrenci verilerini analiz et, Markdown formatında, motive edici ve yapıcı bir rapor sun."
+
+                st.markdown("### 🧠 AI Raporu")
+                container = st.container(border=True)
+
+                # Streaming Başlat
+                stream = get_ai_stream(prompt_data, system)
+                full_resp = container.write_stream(stream)
+
+                # Kaydet
+                from student_streamable import AIInsight
+
+                student.ai_insights.append(AIInsight(analysis=str(full_resp), model=st.session_state.ai.model))
+                st.session_state.manager.save_student(student)
+                st.toast("Rapor kaydedildi!", icon="✅")
+
+        # Geçmiş
+        if student.ai_insights:
+            with st.expander("Geçmiş Analizler"):
+                for insight in reversed(student.ai_insights):
+                    st.caption(f"{insight.date} - {insight.model}")
+                    st.markdown(insight.analysis)
+                    st.divider()
+
+    else:
+        st.warning("Öğrenci yok.")
