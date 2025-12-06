@@ -27,5 +27,5 @@ Bu araç, öğrencilerin akademik notlarını ve davranışsal gözlemlerini tak
 
 ### 1. Projeyi Klonlayın
 ```bash
-git clone [https://github.com/KULLANICI_ADINIZ/ollama-student-ai.git](https://github.com/KULLANICI_ADINIZ/ollama-student-ai.git)
-cd ollama-student-ai
+git clone https://github.com/Sranzx/uft-bilsem.git
+cd uft-bilsem
