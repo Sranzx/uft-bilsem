@@ -30,14 +30,27 @@ Bu projeyi bilgisayarınızda çalıştırmak için aşağıdaki adımları sır
 * **Ollama**: Yapay zeka modellerini yerel olarak çalıştırmak için [Ollama'yı indirin ve kurun](https://ollama.com/).
 
 ### 2. Projeyi İndirin (Clone)
-Terminal veya Komut İstemi'ni (CMD) açın ve projeyi bilgisayarınıza çekin:
+Terminalinizi açın ve projeyi bilgisayarınıza çekin:
 
 ```bash
 git clone [https://github.com/Sranzx/uft-bilsem.git](https://github.com/Sranzx/uft-bilsem.git)
 cd uft-bilsem
+
+### 3\. Sanal Ortam Oluşturma (Önerilen)
+
+Kütüphane çakışmalarını önlemek için sanal ortam kullanmanız önerilir.
+
+```bash
+python -m venv venv
 ```
 
-### 3\. Gerekli Kütüphaneleri Yükleyin
+Sanal ortamı aktifleştirmek için işletim sisteminize/kabuğunuza uygun komutu girin:
+
+  * **Windows:** `venv\Scripts\activate`
+  * **macOS/Linux (Bash/Zsh):** `source venv/bin/activate`
+  * **Fish Shell:** `source venv/bin/activate.fish`
+
+### 4\. Gerekli Kütüphaneleri Yükleyin
 
 Projenin çalışması için gerekli Python paketlerini yükleyin:
 
@@ -45,7 +58,7 @@ Projenin çalışması için gerekli Python paketlerini yükleyin:
 pip install rich requests streamlit openai anthropic google-generativeai fpdf pandas
 ```
 
-### 4\. Yapay Zeka Modelini Hazırlayın
+### 5\. Yapay Zeka Modelini Hazırlayın
 
 Projenin analiz yapabilmesi için Ollama üzerinde ilgili modelin (varsayılan: llama3.2) indirilmiş olması gerekir. Terminalde şu komutu çalıştırın:
 
@@ -75,8 +88,8 @@ streamlit run app.py
 
 ### ⚠️ Olası Sorunlar
 
-  * **"Connection refused" Hatası:** Ollama uygulamasının arka planda çalıştığından emin olun. (Ollama simgesi çubuğunda görünmelidir).
-  * **"Module not found" Hatası:** 3. adımdaki `pip install` komutlarını eksiksiz uyguladığınızı kontrol edin.
+  * **"Connection refused" Hatası:** Ollama uygulamasının arka planda çalıştığından emin olun. (Ollama simgesi görev çubuğunda görünmelidir).
+  * **"Module not found" Hatası:** 4. adımdaki `pip install` komutlarını (sanal ortam aktifken) eksiksiz uyguladığınızı kontrol edin.
   * **Türkçe Karakter Sorunu:** Windows terminalinde Türkçe karakterler bozuk görünürse, terminalde önce `chcp 65001` komutunu çalıştırın.
 
 <!-- end list -->
