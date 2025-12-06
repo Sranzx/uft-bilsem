@@ -46,7 +46,7 @@ if 'ai' not in st.session_state:
 def get_ai_stream(prompt, system_prompt):
     """Ollama yanıtını Streamlit için generator'a dönüştürür"""
     import requests
-    from student_ai_v2 import Config
+    from student_streamable import Config
 
     payload = {
         "model": st.session_state.ai.model,
@@ -184,7 +184,7 @@ elif menu == "📝 Veri Girişi":
                 note = st.text_area("Gözlem Notu")
                 b_type = st.selectbox("Tür", ["neutral", "positive", "negative"])
                 if st.form_submit_button("Gözlem Kaydet"):
-                    from student_ai_v2 import BehaviorNote  # Tekrar import gerekebilir scope için
+                    from student_streamable import BehaviorNote  # Tekrar import gerekebilir scope için
 
                     student.behavior_notes.append(BehaviorNote(note=note, type=b_type))
                     st.session_state.manager.save_student(student)
@@ -230,7 +230,7 @@ elif menu == "🤖 AI Analiz":
                     response_text = report_container.write_stream(stream)
 
                     # Kaydetme
-                    from student_ai_v2 import AIInsight
+                    from student_streamable  import AIInsight
 
                     student.ai_insights.append(AIInsight(analysis=response_text, model=st.session_state.ai.model))
                     st.session_state.manager.save_student(student)
