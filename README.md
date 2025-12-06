@@ -35,6 +35,7 @@ Terminalinizi açın ve projeyi bilgisayarınıza çekin:
 ```bash
 git clone [https://github.com/Sranzx/uft-bilsem.git](https://github.com/Sranzx/uft-bilsem.git)
 cd uft-bilsem
+```
 
 ### 3\. Sanal Ortam Oluşturma (Önerilen)
 
