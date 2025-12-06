@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import json
 import time
-from student_ai_v2 import StudentManager, AIService, Student, Grade, BehaviorNote
+from student_streamable import StudentManager, AIService, Student, Grade, BehaviorNote
 
 # --- SAYFA AYARLARI ---
 st.set_page_config(
