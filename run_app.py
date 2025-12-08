@@ -8,5 +8,11 @@ def resolve_path(path):
 
 if __name__ == "__main__":
     app_path = resolve_path("app.py")
-    sys.argv = ["streamlit", "run", app_path, "--global.developmentMode=false"]
+    # Streamlit'i başlatma komutunu simüle ediyoruz
+    sys.argv = [
+        "streamlit",
+        "run",
+        app_path,
+        "--global.developmentMode=false",
+    ]
     sys.exit(stcli.main())
