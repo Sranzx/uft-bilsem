@@ -34,7 +34,7 @@ Kodlama bilgisi gerektirmeden uygulamayı doğrudan çalıştırmak için bu yö
     ollama pull llama3.2
     ```
 3.  **Uygulamanın İndirilmesi:**
-      * Bu sayfanın sağ tarafında bulunan **[Releases](https://github.com/Sranzx/uft-bilsem/releases)** bölümüne gidin.
+      * Bu sayfanın sağ tarafında bulunan **[Releases](https://www.google.com/search?q=https://github.com/Sranzx/uft-bilsem/releases)** bölümüne gidin.
       * En güncel sürüm (Latest) altındaki `.exe` uzantılı dosyayı bilgisayarınıza indirin.
 4.  **Çalıştırma:** İndirdiğiniz dosyaya çift tıklayarak sistemi başlatın.
 
