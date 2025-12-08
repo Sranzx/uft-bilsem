@@ -1,247 +1,295 @@
 import streamlit as st
+import json
+import requests
 import pandas as pd
 import time
-from student_streamable import StudentManager, AIService, Student, Grade, BehaviorNote, AIInsight
-from utils import create_pdf_report
+from datetime import datetime
+
+# ---------------------------------------------------------
+# 1. SAYFA KONFİGÜRASYONU
+# ---------------------------------------------------------
+st.set_page_config(
+    page_title="Ollama Student Analyst",
+    page_icon="🎓",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Özel CSS ile arayüzü makyajlayalım
+st.markdown("""
+<style>
+    .main { background-color: #0e1117; }
+    .stButton>button { width: 100%; border-radius: 5px; height: 3em; font-weight: bold;}
+    .reportview-container .main .block-container{ padding-top: 2rem; }
+    h1, h2, h3 { color: #4facfe; }
+    .metric-card { background-color: #262730; padding: 15px; border-radius: 10px; border-left: 5px solid #4facfe; }
+    /* Ders silme butonları için stil */
+    .delete-btn { border: 1px solid #ff4b4b; color: #ff4b4b; }
+</style>
+""", unsafe_allow_html=True)
 
 
-def init_session():
-    st.set_page_config(
-        page_title="Öğrenci Zeka Sistemi",
-        page_icon="🎓",
-        layout="wide",
-        initial_sidebar_state="expanded"
+# ---------------------------------------------------------
+# 2. YARDIMCI FONKSİYONLAR
+# ---------------------------------------------------------
+
+def check_ollama_server():
+    """Ollama sunucusunun çalışıp çalışmadığını kontrol eder."""
+    try:
+        response = requests.get("http://localhost:11434/")
+        return response.status_code == 200
+    except:
+        return False
+
+
+def get_ai_response(model, prompt, temperature):
+    """Ollama API'sine istek atar (Streaming destekli)."""
+    url = "http://localhost:11434/api/generate"
+    data = {
+        "model": model,
+        "prompt": prompt,
+        "temperature": temperature,
+        "stream": True
+    }
+
+    try:
+        with requests.post(url, json=data, stream=True) as r:
+            for line in r.iter_lines():
+                if line:
+                    body = json.loads(line)
+                    response_part = body.get("response", "")
+                    yield response_part
+                    if body.get("done", False):
+                        break
+    except Exception as e:
+        yield f"⚠️ Hata: {str(e)}"
+
+
+# ---------------------------------------------------------
+# 3. SESSION STATE (Hafıza Yönetimi)
+# ---------------------------------------------------------
+
+# Öğrenci Verileri
+if 'student_data' not in st.session_state:
+    st.session_state.student_data = {
+        'name': '',
+        'class': '',
+        'notes': {},
+        'behavior': [],
+        'observation': ''
+    }
+
+# Ders Listesi (Varsayılanlar)
+if 'course_list' not in st.session_state:
+    st.session_state.course_list = ["Matematik", "Türkçe", "Fen Bilimleri", "Sosyal Bilgiler"]
+
+if 'analysis_result' not in st.session_state:
+    st.session_state.analysis_result = ""
+
+# ---------------------------------------------------------
+# 4. SIDEBAR (YAN MENÜ)
+# ---------------------------------------------------------
+with st.sidebar:
+    st.image("https://ollama.com/public/ollama.png", width=50)
+    st.title("Ayarlar")
+
+    st.markdown("---")
+
+    # Sunucu Durumu
+    if check_ollama_server():
+        st.success("🟢 Ollama Bağlı")
+    else:
+        st.error("🔴 Bağlantı Yok")
+        st.info("Terminalde `ollama serve` komutunu çalıştırın.")
+
+    st.markdown("---")
+
+    # Model Seçimi
+    selected_model = st.selectbox(
+        "Yapay Zeka Modeli",
+        ["llama3.2", "mistral", "gemma:2b", "phi3"],
+        index=0
     )
-    if 'manager' not in st.session_state:
-        st.session_state.manager = StudentManager()
-    if 'ai' not in st.session_state:
-        st.session_state.ai = AIService()
 
+    # Parametreler
+    temperature = st.slider("Yaratıcılık (Temperature)", 0.0, 1.0, 0.7, 0.1)
 
-def inject_custom_css():
-    st.markdown("""
-        <style>
-        .main { background-color: #f8f9fa; }
-        .stButton>button { width: 100%; border-radius: 6px; font-weight: bold; }
-        div[data-testid="metric-container"] { background-color: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-        </style>
-        """, unsafe_allow_html=True)
+    st.markdown("---")
+    st.caption("v2.1.0 | UFT Bilsem")
 
+# ---------------------------------------------------------
+# 5. ANA EKRAN
+# ---------------------------------------------------------
 
-def render_sidebar():
-    with st.sidebar:
-        st.title("🎓 Öğrenci AI")
-        st.markdown("---")
+col1, col2 = st.columns([3, 1])
+with col1:
+    st.title("🎓 Öğrenci Performans Analisti")
+    st.markdown("Dinamik müfredat destekli pedagojik analiz sistemi.")
+with col2:
+    st.markdown(f"**Tarih:** {datetime.now().strftime('%d.%m.%Y')}")
 
-        st.subheader("⚙️ AI Ayarları")
-        provider = st.selectbox("Sağlayıcı", ["Ollama", "OpenAI", "Anthropic", "Google"])
+st.markdown("---")
 
-        api_key = None
-        model_name = "llama3.2"
+# Sekmeler
+tab1, tab2, tab3 = st.tabs(["📝 Veri Girişi", "📊 Grafik & İstatistik", "🤖 AI Analizi"])
 
-        if provider == "Ollama":
-            model_name = st.text_input("Model Adı", value="llama3.2")
-            is_connected = st.session_state.ai.check_connection()
-            status_color = "green" if is_connected else "red"
-            status_text = "Aktif" if is_connected else "Pasif"
-            st.markdown(f"Durum: :{status_color}[{status_text}]")
+# --- TAB 1: VERİ GİRİŞİ ---
+with tab1:
+    # 1. Bölüm: Kimlik ve Davranış
+    c1, c2 = st.columns(2)
+    with c1:
+        st.subheader("Kimlik Bilgileri")
+        st.session_state.student_data['name'] = st.text_input("Adı Soyadı", value=st.session_state.student_data['name'],
+                                                              placeholder="Örn: Ahmet Yılmaz")
+        st.session_state.student_data['class'] = st.text_input("Sınıfı", value=st.session_state.student_data['class'],
+                                                               placeholder="Örn: 8/A")
 
-        elif provider == "OpenAI":
-            api_key = st.text_input("API Anahtarı", type="password")
-            model_name = st.selectbox("Model", ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"])
+    with c2:
+        st.subheader("Davranış Gözlemi")
+        behaviors = ["Derse Katılım Yüksek", "Ödevlerini Düzenli Yapar", "Dikkat Dağınıklığı Var",
+                     "Arkadaşlarıyla Uyumlu", "Liderlik Özelliği Var", "İçe Kapanık", "Sorumluluk Sahibi"]
+        st.session_state.student_data['behavior'] = st.multiselect("Gözlemlenen Davranışlar", behaviors,
+                                                                   default=st.session_state.student_data['behavior'])
 
-        elif provider == "Anthropic":
-            api_key = st.text_input("API Anahtarı", type="password")
-            model_name = st.selectbox("Model", ["claude-3-5-sonnet-20240620", "claude-3-opus-20240229"])
+    st.markdown("---")
 
-        elif provider == "Google":
-            api_key = st.text_input("API Anahtarı", type="password")
-            model_name = st.selectbox("Model", ["gemini-1.5-flash", "gemini-1.5-pro"])
+    # 2. Bölüm: Ders Yönetimi ve Not Girişi
+    st.subheader("📚 Akademik Notlar")
 
-        st.session_state.ai.configure(provider, model_name, api_key)
+    # Ders Ekleme / Çıkarma Alanı (Expander içinde gizli)
+    with st.expander("⚙️ Ders Listesini Düzenle (Ekle/Çıkar)", expanded=False):
+        col_add, col_del = st.columns([2, 1])
 
-        st.markdown("---")
-        return st.radio("Navigasyon", ["Kontrol Paneli", "Yeni Öğrenci", "Veri Girişi", "AI Analiz"])
+        with col_add:
+            new_course_name = st.text_input("Yeni Ders Adı", placeholder="Örn: Kodlama, Almanca...")
+            if st.button("Ders Ekle"):
+                if new_course_name and new_course_name not in st.session_state.course_list:
+                    st.session_state.course_list.append(new_course_name)
+                    st.success(f"{new_course_name} eklendi!")
+                    time.sleep(0.5)
+                    st.rerun()
+                elif new_course_name in st.session_state.course_list:
+                    st.warning("Bu ders zaten listede var.")
 
+        with col_del:
+            course_to_remove = st.selectbox("Silinecek Ders", st.session_state.course_list)
+            if st.button("Ders Sil", type="primary"):
+                if course_to_remove in st.session_state.course_list:
+                    st.session_state.course_list.remove(course_to_remove)
+                    # Eğer notu girildiyse veriden de silelim
+                    if course_to_remove in st.session_state.student_data['notes']:
+                        del st.session_state.student_data['notes'][course_to_remove]
+                    st.rerun()
 
-def render_dashboard():
-    st.header("📊 Yönetim Paneli")
-    students = st.session_state.manager.get_all_students()
+    # Dinamik Not Giriş Alanı (Grid Layout)
+    if not st.session_state.course_list:
+        st.info("Listenizde hiç ders yok. Lütfen yukarıdan ders ekleyiniz.")
+    else:
+        # Dersleri 4 kolonlu bir ızgarada gösterelim
+        cols = st.columns(4)
+        temp_notes = {}
 
-    if not students:
-        st.info("Sistemde kayıtlı öğrenci yok. Lütfen 'Yeni Öğrenci' menüsünden ekleme yapın.")
-        return
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Toplam Öğrenci", len(students))
-
-    total_grades = sum(len(s.grades) for s in students)
-    col2.metric("Toplam Veri Noktası", total_grades)
-
-    all_scores = [g.score for s in students for g in s.grades]
-    global_avg = sum(all_scores) / len(all_scores) if all_scores else 0
-    col3.metric("Genel Başarı Ortalaması", f"{global_avg:.1f}")
-
-    st.subheader("Öğrenci Listesi")
-    data = []
-    for s in students:
-        avg = sum(g.score for g in s.grades) / len(s.grades) if s.grades else 0
-        last_analysis = s.ai_insights[-1].date if s.ai_insights else "-"
-        data.append({
-            "ID": s.id,
-            "Ad Soyad": s.name,
-            "Sınıf": s.class_name,
-            "Ortalama": f"{avg:.1f}",
-            "Son Analiz": last_analysis
-        })
-
-    df = pd.DataFrame(data)
-    st.dataframe(df, use_container_width=True, hide_index=True)
-
-
-def render_new_student_form():
-    st.header("👤 Yeni Öğrenci Kaydı")
-    with st.form("new_student_form"):
-        col1, col2 = st.columns(2)
-        student_id = col1.text_input("Öğrenci Numarası (ID)")
-        class_name = col2.text_input("Sınıf / Şube")
-        full_name = st.text_input("Ad Soyad")
-
-        if st.form_submit_button("Öğrenciyi Kaydet"):
-            if not student_id or not full_name:
-                st.error("Öğrenci ID ve İsim alanları zorunludur.")
-                return
-
-            if st.session_state.manager.load_student(student_id):
-                st.error("Bu ID ile kayıtlı bir öğrenci zaten mevcut.")
-                return
-
-            new_student = Student(id=student_id, name=full_name, class_name=class_name)
-            st.session_state.manager.save_student(new_student)
-            st.success(f"{full_name} başarıyla sisteme eklendi.")
-            time.sleep(1)
-            st.rerun()
-
-
-def render_data_entry():
-    st.header("📝 Veri Giriş Portalı")
-    students = st.session_state.manager.get_all_students()
-
-    if not students:
-        st.warning("Veri girilecek öğrenci bulunamadı.")
-        return
-
-    student_options = [f"{s.id} - {s.name}" for s in students]
-    selected_option = st.selectbox("Öğrenci Seçin", student_options)
-    student_id = selected_option.split(" - ")[0]
-    student = st.session_state.manager.load_student(student_id)
-
-    tab1, tab2 = st.tabs(["Not Ekle", "Davranış Notu Ekle"])
-
-    with tab1:
-        with st.form("grade_form"):
-            subject = st.text_input("Ders Adı")
-            score = st.number_input("Not", min_value=0, max_value=100, step=1)
-            if st.form_submit_button("Notu Kaydet"):
-                student.grades.append(Grade(subject=subject, score=score))
-                st.session_state.manager.save_student(student)
-                st.success("Not başarıyla eklendi.")
-
-    with tab2:
-        with st.form("behavior_form"):
-            note = st.text_area("Gözlem Notu")
-            note_type = st.selectbox("Tür", ["neutral", "positive", "negative"], format_func=lambda x:
-            {"neutral": "Nötr", "positive": "Olumlu", "negative": "Olumsuz"}[x])
-            if st.form_submit_button("Gözlemi Kaydet"):
-                student.behavior_notes.append(BehaviorNote(note=note, type=note_type))
-                st.session_state.manager.save_student(student)
-                st.success("Davranış kaydı eklendi.")
-
-
-def render_analysis():
-    st.header(f"🤖 AI Analiz Motoru ({st.session_state.ai.provider})")
-    students = st.session_state.manager.get_all_students()
-
-    if not students:
-        st.warning("Analiz edilecek öğrenci yok.")
-        return
-
-    student_options = [f"{s.id} - {s.name}" for s in students]
-    selected_option = st.selectbox("Analiz İçin Öğrenci Seçin", student_options)
-    student_id = selected_option.split(" - ")[0]
-    student = st.session_state.manager.load_student(student_id)
-
-    col1, col2 = st.columns([1, 3])
-
-    with col1:
-        st.info(f"**Kayıtlar:**\n\nNotlar: {len(student.grades)}\nGözlemler: {len(student.behavior_notes)}")
-        start_analysis = st.button("Analizi Başlat ✨", type="primary")
-
-    with col2:
-        if start_analysis:
-            if st.session_state.ai.provider != "Ollama" and not st.session_state.ai.api_key:
-                st.error("Seçilen sağlayıcı için API Anahtarı gereklidir.")
-                return
-
-            prompt = st.session_state.ai.prepare_prompt(student)
-            system_prompt = (
-                "Sen uzman bir eğitim danışmanı ve pedagogsun. Sana verilen öğrenci verilerini analiz et. "
-                "Yanıtını Markdown formatında şu başlıklarla yapılandır: "
-                "1. Yönetici Özeti, 2. Akademik Analiz, 3. Davranışsal İçgörüler, 4. Öneriler. "
-                "Dilin yapıcı, profesyonel ve motive edici olsun. Çıktı dili Türkçe olsun."
-            )
-
-            st.markdown("### Analiz Raporu")
-            response_container = st.container(border=True)
-            stream_generator = st.session_state.ai.generate_stream(prompt, system_prompt)
-            full_response = response_container.write_stream(stream_generator)
-
-            insight = AIInsight(analysis=str(full_response), model=st.session_state.ai.model)
-            student.ai_insights.append(insight)
-            st.session_state.manager.save_student(student)
-            st.toast("Analiz öğrenci profiline kaydedildi.", icon="✅")
-
-            # PDF İndirme Butonu (Analiz bittikten sonra görünür)
-            pdf_data = create_pdf_report(student, str(full_response))
-            st.download_button(
-                label="📄 Raporu PDF Olarak İndir",
-                data=pdf_data,
-                file_name=f"Rapor_{student.name}_{student.id}.pdf",
-                mime="application/pdf"
-            )
-
-        elif student.ai_insights:
-            st.markdown("### Geçmiş Analizler")
-            latest = student.ai_insights[-1]
-            with st.container(border=True):
-                st.caption(f"Tarih: {latest.date} | Model: {latest.model}")
-                st.markdown(latest.analysis)
-
-                # Geçmiş rapor için PDF butonu
-                pdf_data = create_pdf_report(student, latest.analysis)
-                st.download_button(
-                    label="📄 Bu Raporu İndir",
-                    data=pdf_data,
-                    file_name=f"GecmisRapor_{student.name}.pdf",
-                    mime="application/pdf",
-                    key="history_pdf"
+        for i, course in enumerate(st.session_state.course_list):
+            with cols[i % 4]:
+                # Her ders için bir number_input oluşturuyoruz
+                # key parametresi unique olmalı, bu yüzden ders adını kullanıyoruz
+                val = st.number_input(
+                    f"{course}",
+                    min_value=0,
+                    max_value=100,
+                    step=5,
+                    key=f"grade_{course}",
+                    value=st.session_state.student_data['notes'].get(course, 0)  # Varsa eski değeri getir
                 )
+                temp_notes[course] = val
 
+        # Güncel notları session state'e kaydet
+        st.session_state.student_data['notes'] = temp_notes
 
-def main():
-    init_session()
-    inject_custom_css()
-    page = render_sidebar()
+    st.markdown("---")
+    st.markdown("### 👁️ Öğretmen Özel Notu")
+    st.session_state.student_data['observation'] = st.text_area("Eklemek istedikleriniz...", height=100,
+                                                                placeholder="Öğrencinin son zamanlardaki durumu hakkında detaylı notlar...")
 
-    if page == "Kontrol Paneli":
-        render_dashboard()
-    elif page == "Yeni Öğrenci":
-        render_new_student_form()
-    elif page == "Veri Girişi":
-        render_data_entry()
-    elif page == "AI Analiz":
-        render_analysis()
+# --- TAB 2: GRAFİKLER ---
+with tab2:
+    if not any(st.session_state.student_data['notes'].values()):
+        st.warning("Lütfen önce 'Veri Girişi' sekmesinden notları giriniz.")
+    else:
+        st.subheader(f"{st.session_state.student_data['name'] or 'Öğrenci'} - Akademik Başarı Grafiği")
 
+        # Pandas DataFrame
+        df = pd.DataFrame(list(st.session_state.student_data['notes'].items()), columns=["Ders", "Puan"])
 
-if __name__ == "__main__":
-    main()
+        gc1, gc2 = st.columns([2, 1])
+
+        with gc1:
+            st.bar_chart(df.set_index("Ders"), color="#4facfe")
+
+        with gc2:
+            avg = df["Puan"].mean()
+            st.metric(label="Genel Ortalama", value=f"{avg:.1f}")
+
+            # En yüksek ve en düşük dersi bul
+            max_course = df.loc[df['Puan'].idxmax()]
+            min_course = df.loc[df['Puan'].idxmin()]
+
+            st.info(f"🏆 En İyi: **{max_course['Ders']}** ({max_course['Puan']})")
+            st.warning(f"📉 Destek: **{min_course['Ders']}** ({min_course['Puan']})")
+
+            # Ham Veri Tablosu
+            with st.expander("Detaylı Not Tablosu"):
+                st.dataframe(df, hide_index=True, use_container_width=True)
+
+# --- TAB 3: AI ANALİZİ ---
+with tab3:
+    st.subheader("🤖 Yapay Zeka Raporu")
+
+    student = st.session_state.student_data
+
+    # Prompt, dinamik ders listesine göre otomatik şekillenecek
+    prompt_text = f"""
+    Sen uzman bir eğitim koçu ve pedagogsun. Aşağıdaki öğrenci verilerini analiz et.
+
+    ÖĞRENCİ: {student['name']} ({student['class']})
+
+    DERSLER VE NOTLAR:
+    {json.dumps(student['notes'], ensure_ascii=False)}
+
+    DAVRANIŞLAR: {', '.join(student['behavior'])}
+    ÖĞRETMEN GÖZLEMİ: {student['observation']}
+
+    GÖREV:
+    1. Akademik durumu yorumla (Sayısal, Sözel veya Beceri derslerindeki dengesini analiz et).
+    2. Davranışsal analiz yap.
+    3. Öğrenciye özel, uygulanabilir 3 adet gelişim tavsiyesi ver.
+    4. Raporu samimi ama profesyonel bir dille yaz. Türkçe yanıt ver.
+    """
+
+    start_btn = st.button("Analizi Başlat", type="primary")
+
+    if start_btn:
+        if not check_ollama_server():
+            st.error("Ollama sunucusu çalışmıyor! Lütfen terminalde 'ollama serve' yapın.")
+        else:
+            if not student['notes']:
+                st.warning("Analiz için en az bir ders notu girmelisiniz.")
+            else:
+                response_container = st.empty()
+                full_response = ""
+
+                st.toast("Yapay Zeka raporu hazırlıyor...", icon="🧠")
+
+                for chunk in get_ai_response(selected_model, prompt_text, temperature):
+                    full_response += chunk
+                    response_container.markdown(full_response + "▌")
+
+                response_container.markdown(full_response)
+                st.session_state.analysis_result = full_response
+
+                st.download_button(
+                    label="Raporu İndir (TXT)",
+                    data=full_response,
+                    file_name=f"{student['name']}_analiz.txt",
+                    mime="text/plain"
+                )
