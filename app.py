@@ -303,7 +303,33 @@ with tab1:
     st.markdown("### 👁️ Öğretmen Özel Notu")
     st.session_state.student_data['observation'] = st.text_area("Eklemek istedikleriniz...", height=100,
                                                                 placeholder="Öğrencinin son zamanlardaki durumu hakkında detaylı notlar...")
+st.markdown("---")
+save_col1, save_col2 = st.columns([1, 4])
+with save_col1:
+    if st.button("💾 VERİLERİ KAYDET", type="primary"):
+        if not st.session_state.student_data['name']:
+            st.error("Lütfen en azından bir isim giriniz.")
+        else:
+            # 1. Session State verilerini Student nesnesine dönüştür
+            s_data = st.session_state.student_data
 
+            # Notları Grade objelerine çevir
+            grade_objects = [Grade(subject=k, score=v) for k, v in s_data['notes'].items()]
+
+            # Student Nesnesi Oluştur
+            new_student = Student(
+                id=s_data['id'],
+                name=s_data['name'],
+                class_name=s_data['class'],
+                grades=grade_objects,
+                file_content=s_data['file_content']
+            )
+
+            # 2. JSON Dosyasına Yaz
+            manager.save_student(new_student)
+            st.success(f"{s_data['name']} başarıyla veritabanına kaydedildi!")
+            time.sleep(1)
+            st.rerun()
 # --- TAB 2: GRAFİKLER ---
 with tab2:
     if not any(st.session_state.student_data['notes'].values()):
