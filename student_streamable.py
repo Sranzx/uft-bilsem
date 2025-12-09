@@ -1,10 +1,11 @@
 import json
 import os
 import requests
+import PyPDF2
+from docx import Document
 from datetime import datetime
 from typing import List, Optional, Generator, Dict
 from dataclasses import dataclass, field, asdict
-
 try:
     import openai
 except ImportError:
@@ -141,6 +142,24 @@ class AIService:
                 return False
         return True
 
+    def get_ollama_models(self) -> List[str]:
+        """Yerel Ollama sunucusundaki yüklü modelleri getirir."""
+        if self.provider != "Ollama":
+            return [self.model]
+
+        try:
+            # Ollama'dan model listesini iste
+            response = requests.get(f"{Config.OLLAMA_URL}/api/tags", timeout=2)
+            if response.status_code == 200:
+                data = response.json()
+                # Modellerin isimlerini liste olarak al (örn: ['llama3:latest', 'mistral:latest'])
+                models = [model['name'] for model in data.get('models', [])]
+                return models if models else [Config.DEFAULT_MODEL]
+            return [Config.DEFAULT_MODEL]
+        except Exception:
+            # Bağlantı hatası varsa varsayılanı döndür
+            return [Config.DEFAULT_MODEL]
+
     def prepare_prompt(self, student: Student) -> str:
         summary = [f"Öğrenci: {student.name} ({student.class_name})", ""]
 
@@ -203,19 +222,35 @@ class AIService:
             return
 
         client = openai.OpenAI(api_key=self.api_key)
-        stream = client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ],
-            stream=True
-        )
-        for chunk in stream:
-            content = chunk.choices[0].delta.content
-            if content:
-                yield content
 
+        try:
+            # DÜZELTME: Tüm parametrelerin adını (model=, messages=, stream=) açıkça yazıyoruz.
+            stream = client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                stream=True
+            )
+
+            for chunk in stream:
+                if chunk.choices:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        yield content
+
+        except Exception as e:
+            yield f"OpenAI Hatası: {str(e)}"
+
+            for chunk in stream:
+                if chunk.choices:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        yield content
+
+        except Exception as e:
+            yield f"OpenAI Hatası: {str(e)}"
     def _stream_anthropic(self, prompt: str, system_prompt: str) -> Generator[str, None, None]:
         if not anthropic:
             yield "Hata: Anthropic kütüphanesi yüklü değil."
@@ -241,3 +276,35 @@ class AIService:
         response = model.generate_content(prompt, stream=True)
         for chunk in response:
             yield chunk.text
+
+class FileHandler:
+    @staticmethod
+    def extract_text_from_file(uploaded_file) -> str:
+        """Yüklenen dosyadan metin içeriğini çıkarır (PDF, DOCX, TXT)."""
+        text = ""
+        try:
+            # Dosya uzantısını kontrol et
+            file_type = uploaded_file.name.split('.')[-1].lower()
+
+            if file_type == 'pdf':
+                reader = PyPDF2.PdfReader(uploaded_file)
+                for page in reader.pages:
+                    text += page.extract_text() + "\n"
+
+            elif file_type in ['docx', 'doc']:
+                doc = Document(uploaded_file)
+                for para in doc.paragraphs:
+                    text += para.text + "\n"
+
+            elif file_type == 'txt':
+                # BytesIO'dan string'e çevir
+                text = uploaded_file.getvalue().decode("utf-8")
+
+            else:
+                return f"Desteklenmeyen dosya formatı: {file_type}"
+
+            # Token sınırını aşmamak için çok uzun metinleri kırpalım (yaklaşık 15.000 karakter)
+            return text[:15000] + ("..." if len(text) > 15000 else "")
+
+        except Exception as e:
+            return f"Dosya okunurken hata oluştu: {str(e)}"

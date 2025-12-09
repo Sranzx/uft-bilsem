@@ -4,6 +4,8 @@ import requests
 import pandas as pd
 import time
 from datetime import datetime
+from student_streamable import FileHandler
+from student_streamable import AIService, Config
 
 # ---------------------------------------------------------
 # 1. SAYFA KONFİGÜRASYONU
@@ -76,7 +78,8 @@ if 'student_data' not in st.session_state:
         'class': '',
         'notes': {},
         'behavior': [],
-        'observation': ''
+        'observation': '',
+        'file_content': ''
     }
 
 # Ders Listesi (Varsayılanlar)
@@ -92,30 +95,51 @@ if 'analysis_result' not in st.session_state:
 with st.sidebar:
     st.image("https://ollama.com/public/ollama.png", width=50)
     st.title("Ayarlar")
-
     st.markdown("---")
 
-    # Sunucu Durumu
-    if check_ollama_server():
+    # Servis örneğini oluştur
+    ai_service = AIService()
+
+    # 1. Sunucu Kontrolü ve Model Listesi Alma
+    if ai_service.check_connection():
         st.success("🟢 Ollama Bağlı")
+
+        # Dinamik olarak modelleri çek
+        available_models = ai_service.get_ollama_models()
+
+        # Eğer liste boş gelirse (bir hata olduysa) varsayılan listeyi göster
+        if not available_models:
+            available_models = ["llama3.2", "mistral", "gemma:2b"]
+
+        # Model Seçim Kutusu (Dinamik Liste)
+        selected_model = st.selectbox(
+            "Yapay Zeka Modeli",
+            available_models,
+            index=0
+        )
+
+        # Seçilen modeli servise bildir
+        ai_service.configure(provider="Ollama", model=selected_model)
+
     else:
         st.error("🔴 Bağlantı Yok")
-        st.info("Terminalde `ollama serve` komutunu çalıştırın.")
+        st.warning("Ollama arka planda çalışmıyor.")
+        st.info("Terminali açıp `ollama serve` yazın, sonra sayfayı yenileyin.")
+
+        # Bağlantı yoksa varsayılan bir liste göster ki arayüz çökmesin
+        selected_model = st.selectbox("Model (Çevrimdışı)", [Config.DEFAULT_MODEL], disabled=True)
 
     st.markdown("---")
-
-    # Model Seçimi
-    selected_model = st.selectbox(
-        "Yapay Zeka Modeli",
-        ["llama3.2", "mistral", "gemma:2b", "phi3"],
-        index=0
-    )
 
     # Parametreler
     temperature = st.slider("Yaratıcılık (Temperature)", 0.0, 1.0, 0.7, 0.1)
 
+    # Yenile Butonu (Yeni model indirilirse listeyi güncellemek için)
+    if st.button("🔄 Model Listesini Yenile"):
+        st.rerun()
+
     st.markdown("---")
-    st.caption("v2.1.0 | UFT Bilsem")
+    st.caption("v2.2.0 | Dinamik Model Algılama")
 
 # ---------------------------------------------------------
 # 5. ANA EKRAN
@@ -155,6 +179,20 @@ with tab1:
 
     # 2. Bölüm: Ders Yönetimi ve Not Girişi
     st.subheader("📚 Akademik Notlar")
+
+    st.markdown("---")
+    st.subheader("📂 Öğrenci Ürün Dosyası (Ödev/Proje)")
+
+    uploaded_file = st.file_uploader("Dosya Yükle (PDF, DOCX, TXT)", type=['pdf', 'docx', 'txt'])
+
+    if uploaded_file is not None:
+        with st.spinner("Dosya okunuyor..."):
+            extracted_text = FileHandler.extract_text_from_file(uploaded_file)
+            st.session_state.student_data['file_content'] = extracted_text
+            st.success(f"Dosya başarıyla işlendi! ({len(extracted_text)} karakter)")
+
+            with st.expander("Dosya İçeriğini Görüntüle"):
+                st.text(extracted_text)
 
     # Ders Ekleme / Çıkarma Alanı (Expander içinde gizli)
     with st.expander("⚙️ Ders Listesini Düzenle (Ekle/Çıkar)", expanded=False):
@@ -247,24 +285,30 @@ with tab3:
 
     student = st.session_state.student_data
 
-    # Prompt, dinamik ders listesine göre otomatik şekillenecek
+    # Prompt, dinamik ders listesine ve DOSYA İÇERİĞİNE göre otomatik şekillenecek
     prompt_text = f"""
-    Sen uzman bir eğitim koçu ve pedagogsun. Aşağıdaki öğrenci verilerini analiz et.
+        Sen uzman bir eğitim koçu ve pedagogsun. Aşağıdaki öğrenci verilerini ve öğrencinin hazırladığı ödev/proje dosyasını analiz et.
 
-    ÖĞRENCİ: {student['name']} ({student['class']})
+        ÖĞRENCİ: {student['name']} ({student['class']})
 
-    DERSLER VE NOTLAR:
-    {json.dumps(student['notes'], ensure_ascii=False)}
+        DERSLER VE NOTLAR:
+        {json.dumps(student['notes'], ensure_ascii=False)}
 
-    DAVRANIŞLAR: {', '.join(student['behavior'])}
-    ÖĞRETMEN GÖZLEMİ: {student['observation']}
+        DAVRANIŞLAR: {', '.join(student['behavior'])}
+        ÖĞRETMEN GÖZLEMİ: {student['observation']}
 
-    GÖREV:
-    1. Akademik durumu yorumla (Sayısal, Sözel veya Beceri derslerindeki dengesini analiz et).
-    2. Davranışsal analiz yap.
-    3. Öğrenciye özel, uygulanabilir 3 adet gelişim tavsiyesi ver.
-    4. Raporu samimi ama profesyonel bir dille yaz. Türkçe yanıt ver.
-    """
+        ---
+        ÖĞRENCİ TARAFINDAN YÜKLENEN DOSYA İÇERİĞİ (Ödev/Kompozisyon/Proje):
+        "{student.get('file_content', 'Dosya yüklenmedi.')}"
+        ---
+
+        GÖREV:
+        1. Akademik durumu notlara göre yorumla.
+        2. Yüklenen dosya içeriğini (varsa) dil bilgisi, ifade yeteneği ve konuya hakimiyet açısından değerlendir.
+        3. Davranışsal analiz yap.
+        4. Öğrencinin hem notlarına hem de yüklediği dosyadaki performansına dayanarak 3 adet gelişim tavsiyesi ver.
+        5. Raporu samimi ama profesyonel bir dille yaz. Türkçe yanıt ver.
+        """
 
     start_btn = st.button("Analizi Başlat", type="primary")
 
