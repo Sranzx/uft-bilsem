@@ -217,14 +217,21 @@ class AIService:
                 yield f"Ollama API Hatası: {response.status_code}"
 
     def _stream_openai(self, prompt: str, system_prompt: str) -> Generator[str, None, None]:
-        if not openai:
+        # 1. Kütüphane Kontrolü
+        if openai is None:
             yield "Hata: OpenAI kütüphanesi yüklü değil."
             return
 
-        client = openai.OpenAI(api_key=self.api_key)
-
+        # 2. İstemciyi Başlat
         try:
-            # DÜZELTME: Tüm parametrelerin adını (model=, messages=, stream=) açıkça yazıyoruz.
+            client = openai.OpenAI(api_key=self.api_key)
+        except Exception as e:
+            yield f"Client Başlatma Hatası: {str(e)}"
+            return
+
+        # 3. İstek ve Akış
+        try:
+            # Değişken adını 'stream' olarak atıyoruz
             stream = client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -234,15 +241,7 @@ class AIService:
                 stream=True
             )
 
-            for chunk in stream:
-                if chunk.choices:
-                    content = chunk.choices[0].delta.content
-                    if content:
-                        yield content
-
-        except Exception as e:
-            yield f"OpenAI Hatası: {str(e)}"
-
+            # Döngüde de aynı 'stream' adını kullanıyoruz
             for chunk in stream:
                 if chunk.choices:
                     content = chunk.choices[0].delta.content
