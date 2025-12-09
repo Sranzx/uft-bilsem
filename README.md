@@ -85,7 +85,7 @@ source venv/bin/activate.fish
 Gerekli Python paketlerini yükleyin:
 
 ```bash
-pip install streamlit pandas requests PyPDF2 docx
+pip install -r requirements.txt
 ```
 
 #### 5\. Uygulamayı Başlatma
