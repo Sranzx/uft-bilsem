@@ -16,17 +16,17 @@ sep = os.pathsep
 
 # Komut listesini hazırlıyoruz
 commands = [
-    'run_app.py',                       # Başlatıcı dosya
-    '--onefile',                        # Tek dosya
-    '--name=UFT-BILSEM',                # Exe'nin adı
-    '--clean',                          # Önbelleği temizle
-    '--noconsole',                      # Konsol penceresini gizle
-    
+    'run_app.py',  # Başlatıcı dosya
+    '--onefile',  # Tek dosya
+    '--name=UFT-BILSEM',  # Exe'nin adı
+    '--clean',  # Önbelleği temizle
+    '--noconsole',  # Konsol penceresini gizle
+
     # --- 1. EKSİK DOSYALAR (DATA) ---
     # Hem app.py hem de student_streamable.py dosyasını exe içine gömüyoruz
     f'--add-data=app.py{sep}.',
-    f'--add-data=student_streamable.py{sep}.', 
-    
+    f'--add-data=student_streamable.py{sep}.',
+
     # --- 2. ARAYÜZ DOSYALARI ---
     # Streamlit static dosyalarını ekliyoruz (index.html hatasını çözer)
     f'--add-data={static_path}{sep}streamlit/static',
@@ -38,7 +38,7 @@ commands = [
     '--hidden-import=streamlit.web.cli',
     '--hidden-import=streamlit.runtime.media_file_manager',
     '--hidden-import=streamlit.runtime.memory_media_file_manager',
-    
+
     # Sizin projenizin bağımlılıkları
     '--hidden-import=openai',
     '--hidden-import=anthropic',
@@ -48,7 +48,7 @@ commands = [
     '--hidden-import=pandas',
     '--hidden-import=numpy',
     '--hidden-import=requests',
-    
+
     # --- METADATA KOPYALAMA ---
     # Versiyon bilgileri için şart
     '--copy-metadata=streamlit',
@@ -57,7 +57,7 @@ commands = [
     '--copy-metadata=packaging',
     # regex paketini kaldırdım, eğer yukarıdaki pip install regex'i yaptıysanız
     # aşağıdaki satırın başındaki # işaretini kaldırabilirsiniz.
-    # '--copy-metadata=regex', 
+    # '--copy-metadata=regex',
 ]
 
 # Eğer ikon varsa komutlara ekle
