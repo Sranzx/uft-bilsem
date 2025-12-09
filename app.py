@@ -129,6 +129,10 @@ def get_ai_response(model, prompt, temperature):
     except Exception as e:
         yield f"⚠️ Hata: {str(e)}"
 
+if 'watcher_thread_started' not in st.session_state:
+    t = threading.Thread(target=browser_watcher, daemon=True)
+    t.start()
+    st.session_state.watcher_thread_started = True
 
 # ---------------------------------------------------------
 # 4. SESSION STATE BAŞLATMA
