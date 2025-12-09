@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import List, Optional, Generator, Dict, Any
 from dataclasses import dataclass, field, asdict
 
-# --- Kütüphane Yüklemeleri (Hata Önleyici) ---
+# --- Kütüphane Yüklemeleri ---
 openai: Any = None
 anthropic: Any = None
 genai: Any = None
@@ -73,40 +73,39 @@ class Student:
 
     @classmethod
     def from_dict(cls, data: Dict):
-        # --- OTOMATİK DÜZELTME BLOĞU (ESKİ VERİLER İÇİN) ---
-        # Eski JSON'larda 'class' olabilir, biz 'class_name' istiyoruz.
+        # 1. Eski veri düzeltmesi (class -> class_name)
         if "class" in data and "class_name" not in data:
             data["class_name"] = data["class"]
 
-        # 'class' anahtarını data'dan silelim ki dataclass hata vermesin
+        # 2. Gereksiz veya çakışan anahtarları temizle
         if "class" in data:
             del data["class"]
 
-        # Eksik ID varsa oluştur
         if "id" not in data:
             import uuid
             data["id"] = str(uuid.uuid4())
 
-        # Gerekli anahtarları kontrol et
-        required_keys = {"name", "class_name"}
-        if not required_keys.issubset(data.keys()):
-            # Hangi anahtar eksikse onu söyle (Debug için)
-            missing = required_keys - data.keys()
-            raise ValueError(f"Veri eksik: {missing}")
+        # 3. Manuel işlenecek karmaşık alanlar
+        # Bunları filtered_data'dan çıkaracağız ki çakışma olmasın
+        complex_fields = {"grades", "behavior_notes", "ai_insights"}
 
-        # Alt nesneleri oluştur
         grades = [Grade(**g) for g in data.get("grades", [])]
         notes = [BehaviorNote(**n) for n in data.get("behavior_notes", [])]
         insights = [AIInsight(**i) for i in data.get("ai_insights", [])]
 
-        # Sınıf yapısına uymayan gereksiz key'leri temizle
-        valid_keys = {k for k in data if k in cls.__annotations__}
+        # 4. Basit alanları filtrele (name, id, class_name, file_content vb.)
+        # Karmaşık alanları (complex_fields) HARİÇ tutuyoruz.
+        valid_keys = {
+            k for k in data
+            if k in cls.__annotations__ and k not in complex_fields
+        }
         filtered_data = {k: data[k] for k in valid_keys}
 
-        # file_content yoksa boş string ata
         if "file_content" not in filtered_data:
             filtered_data["file_content"] = ""
 
+        # 5. Nesneyi oluştur
+        # Artık 'grades' sadece aşağıda elle veriliyor, filtered_data içinde yok.
         return cls(
             **filtered_data,
             grades=grades,
@@ -121,32 +120,27 @@ class FileHandler:
         text = ""
         try:
             file_type = uploaded_file.name.split('.')[-1].lower()
-
             if file_type == 'pdf':
                 reader = PyPDF2.PdfReader(uploaded_file)
                 for page in reader.pages:
                     text += page.extract_text() + "\n"
-
             elif file_type in ['docx', 'doc']:
                 doc = Document(uploaded_file)
                 for para in doc.paragraphs:
                     text += para.text + "\n"
-
             elif file_type == 'txt':
                 text = uploaded_file.getvalue().decode("utf-8")
             else:
-                return f"Desteklenmeyen format: {file_type}"
+                return f"Format desteklenmiyor: {file_type}"
             return text[:15000] + ("..." if len(text) > 15000 else "")
         except Exception as e:
-            return f"Hata: {str(e)}"
+            return f"Dosya hatası: {str(e)}"
 
 
 class StudentManager:
     def __init__(self):
-        # Klasör yoksa oluştur (Mutlaka çalışmalı)
         if not os.path.exists(Config.DATA_DIR):
             os.makedirs(Config.DATA_DIR)
-            print(f"📁 Veri klasörü oluşturuldu: {os.path.abspath(Config.DATA_DIR)}")
 
     def _get_path(self, student_id: str) -> str:
         return os.path.join(Config.DATA_DIR, f"{student_id}.json")
@@ -156,9 +150,8 @@ class StudentManager:
         try:
             with open(self._get_path(student.id), 'w', encoding='utf-8') as f:
                 json.dump(student.to_dict(), f, ensure_ascii=False, indent=2)
-            print(f"✅ Kayıt başarılı: {student.name}")
         except Exception as e:
-            print(f"❌ Kayıt hatası: {e}")
+            print(f"Kayıt hatası ({student.name}): {e}")
 
     def load_student(self, student_id: str) -> Optional[Student]:
         path = self._get_path(student_id)
@@ -169,8 +162,8 @@ class StudentManager:
                 data = json.load(f)
             return Student.from_dict(data)
         except Exception as e:
-            # HATA GİZLEME! Terminale hatayı bas ki neden yüklenmediğini görelim.
-            print(f"⚠️ Dosya yüklenemedi ({student_id}): {e}")
+            # Hata ayrıntısını görmek için print ekleyelim
+            print(f"Yükleme hatası ({student_id}): {e}")
             return None
 
     def get_all_students(self) -> List[Student]:
@@ -178,7 +171,6 @@ class StudentManager:
         if not os.path.exists(Config.DATA_DIR):
             return []
 
-        # Klasördeki tüm JSON'ları tara
         for filename in os.listdir(Config.DATA_DIR):
             if filename.endswith('.json'):
                 student_id = filename.replace('.json', '')
@@ -186,7 +178,6 @@ class StudentManager:
                 if student:
                     students.append(student)
 
-        # İsme göre sırala
         students.sort(key=lambda x: x.name)
         return students
 
@@ -225,19 +216,16 @@ class AIService:
             return [Config.DEFAULT_MODEL]
 
     def prepare_prompt(self, student: Student) -> str:
-        # Prompt hazırlama mantığı
         summary = [f"Öğrenci: {student.name} ({student.class_name})", ""]
-        # ... (Geri kalan prompt mantığı aynı) ...
-        return "\n".join(summary)
+        return "\n".join(summary)  # (Basitleştirildi, app.py içinde detaylı yapılıyor zaten)
 
     def generate_stream(self, prompt: str, system_prompt: str) -> Generator[str, None, None]:
         full_prompt = f"{system_prompt}\n\nVERİLER:\n{prompt}"
         try:
             if self.provider == "Ollama":
                 yield from self._stream_ollama(full_prompt)
-            # ... Diğer sağlayıcılar ...
             else:
-                yield f"Hata: Bilinmeyen sağlayıcı {self.provider}"
+                yield f"Hata: {self.provider} desteklenmiyor."
         except Exception as e:
             yield f"Hata: {str(e)}"
 
@@ -257,40 +245,8 @@ class AIService:
                             body = json.loads(line)
                             yield body.get('response', '')
                 else:
-                    yield f"API Hatası: {response.status_code}"
+                    yield f"API Hata: {response.status_code}"
         except Exception as e:
             yield f"Bağlantı Hatası: {str(e)}"
 
-    # Diğer stream fonksiyonları (OpenAI vb.) aynı kalabilir...
-    # (Önceki kodunuzdaki gibi)
-    def _stream_anthropic(self, prompt: str, system_prompt: str) -> Generator[str, None, None]:
-        if anthropic is None:
-            yield "Hata: Anthropic kütüphanesi yüklü değil."
-            return
-
-        try:
-            client = anthropic.Anthropic(api_key=self.api_key)
-            with client.messages.stream(
-                    max_tokens=1024,
-                    system=system_prompt,
-                    messages=[{"role": "user", "content": prompt}],
-                    model=self.model
-            ) as stream:
-                for text in stream.text_stream:
-                    yield text
-        except Exception as e:
-            yield f"Anthropic Hatası: {str(e)}"
-
-    def _stream_google(self, prompt: str) -> Generator[str, None, None]:
-        if genai is None:
-            yield "Hata: Google Generative AI kütüphanesi yüklü değil."
-            return
-
-        try:
-            genai.configure(api_key=self.api_key)
-            model = genai.GenerativeModel(self.model)
-            response = model.generate_content(prompt, stream=True)
-            for chunk in response:
-                yield chunk.text
-        except Exception as e:
-            yield f"Google AI Hatası: {str(e)}"
+    # Diğer metodlar (OpenAI, Anthropic vb.) buraya eklenebilir...
