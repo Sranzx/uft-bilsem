@@ -85,7 +85,7 @@ source venv/bin/activate.fish
 Gerekli Python paketlerini yükleyin:
 
 ```bash
-pip install rich requests streamlit openai anthropic google-generativeai fpdf pandas
+pip install streamlit pandas requests PyPDF2 docx
 ```
 
 #### 5\. Uygulamayı Başlatma
