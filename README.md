@@ -71,7 +71,7 @@ python -m venv venv
 
 # Sanal ortamı aktif et
 # Windows için:
-.\venv\Scripts\Activate.PS1
+.\venv\Scripts\Activate.ps1
 
 # macOS/Linux için:
 source venv/bin/activate
