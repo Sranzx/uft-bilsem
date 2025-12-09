@@ -4,22 +4,32 @@ import requests
 import PyPDF2
 from docx import Document
 from datetime import datetime
-from typing import List, Optional, Generator, Dict
+# 'Any' modülünü burada aktif olarak kullanacağız
+from typing import List, Optional, Generator, Dict, Any
 from dataclasses import dataclass, field, asdict
+
+# --- 1. KÜTÜPHANE İMPORTLARI (PYCHARM DOSTU VERSİYON) ---
+# Değişkenleri önce 'Any' tipiyle tanımlıyoruz.
+# Bu, PyCharm'a "Bu değişken None olabilir ama modül de olabilir, hata verme" der.
+
+openai: Any = None
+anthropic: Any = None
+genai: Any = None
+
 try:
     import openai
 except ImportError:
-    openai = None
+    pass  # Zaten yukarıda None olarak tanımlı, bir şey yapmaya gerek yok.
 
 try:
     import anthropic
 except ImportError:
-    anthropic = None
+    pass
 
 try:
     import google.generativeai as genai
 except ImportError:
-    genai = None
+    pass
 
 
 class Config:
@@ -59,7 +69,6 @@ class Student:
     grades: List[Grade] = field(default_factory=list)
     behavior_notes: List[BehaviorNote] = field(default_factory=list)
     ai_insights: List[AIInsight] = field(default_factory=list)
-    # YENİ EKLENEN ALAN: Dosya içeriğini kaydetmek için
     file_content: str = ""
     last_updated: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
@@ -68,8 +77,6 @@ class Student:
 
     @classmethod
     def from_dict(cls, data: Dict):
-        # Bu kısım JSON'dan okurken hata almamak için önemlidir
-        # Eğer eski kayıtlarda 'file_content' yoksa boş string atarız.
         required_keys = {"id", "name", "class_name"}
         if not required_keys.issubset(data.keys()):
             raise ValueError(f"Eksik anahtarlar: {required_keys - data.keys()}")
@@ -78,11 +85,10 @@ class Student:
         notes = [BehaviorNote(**n) for n in data.get("behavior_notes", [])]
         insights = [AIInsight(**i) for i in data.get("ai_insights", [])]
 
-        # Güvenli veri çekme
         valid_keys = {k for k in data if k in cls.__annotations__}
         filtered_data = {k: data[k] for k in valid_keys}
 
-        # file_content alanını manuel kontrol et
+        # file_content manuel kontrol
         file_content = data.get("file_content", "")
 
         return cls(
@@ -91,6 +97,36 @@ class Student:
             behavior_notes=notes,
             ai_insights=insights
         )
+
+
+class FileHandler:
+    @staticmethod
+    def extract_text_from_file(uploaded_file) -> str:
+        text = ""
+        try:
+            file_type = uploaded_file.name.split('.')[-1].lower()
+
+            if file_type == 'pdf':
+                reader = PyPDF2.PdfReader(uploaded_file)
+                for page in reader.pages:
+                    text += page.extract_text() + "\n"
+
+            elif file_type in ['docx', 'doc']:
+                doc = Document(uploaded_file)
+                for para in doc.paragraphs:
+                    text += para.text + "\n"
+
+            elif file_type == 'txt':
+                text = uploaded_file.getvalue().decode("utf-8")
+
+            else:
+                return f"Desteklenmeyen dosya formatı: {file_type}"
+
+            return text[:15000] + ("..." if len(text) > 15000 else "")
+
+        except Exception as e:
+            return f"Dosya okunurken hata oluştu: {str(e)}"
+
 
 class StudentManager:
     def __init__(self):
@@ -150,21 +186,16 @@ class AIService:
         return True
 
     def get_ollama_models(self) -> List[str]:
-        """Yerel Ollama sunucusundaki yüklü modelleri getirir."""
         if self.provider != "Ollama":
             return [self.model]
-
         try:
-            # Ollama'dan model listesini iste
             response = requests.get(f"{Config.OLLAMA_URL}/api/tags", timeout=2)
             if response.status_code == 200:
                 data = response.json()
-                # Modellerin isimlerini liste olarak al (örn: ['llama3:latest', 'mistral:latest'])
                 models = [model['name'] for model in data.get('models', [])]
                 return models if models else [Config.DEFAULT_MODEL]
             return [Config.DEFAULT_MODEL]
         except Exception:
-            # Bağlantı hatası varsa varsayılanı döndür
             return [Config.DEFAULT_MODEL]
 
     def prepare_prompt(self, student: Student) -> str:
@@ -181,6 +212,9 @@ class AIService:
                 summary.append(f"- {subject}: Ortalama {avg:.1f} (Notlar: {scores})")
         else:
             summary.append("AKADEMİK PERFORMANS: Veri yok.")
+
+        if student.file_content:
+            summary.append(f"\nYÜKLENEN DOSYA İÇERİĞİ:\n{student.file_content[:2000]}...")
 
         if student.behavior_notes:
             summary.append("\nDAVRANIŞ KAYITLARI:")
@@ -211,34 +245,29 @@ class AIService:
             "model": self.model,
             "prompt": prompt,
             "stream": True,
-            "options": {"temperature": 0.3, "num_ctx": 2048}
+            "options": {"temperature": 0.7, "num_ctx": 4096}
         }
-        with requests.post(f"{Config.OLLAMA_URL}/api/generate", json=payload, stream=True,
-                           timeout=Config.TIMEOUT) as response:
-            if response.status_code == 200:
-                for line in response.iter_lines():
-                    if line:
-                        body = json.loads(line)
-                        yield body.get('response', '')
-            else:
-                yield f"Ollama API Hatası: {response.status_code}"
+        try:
+            with requests.post(f"{Config.OLLAMA_URL}/api/generate", json=payload, stream=True,
+                               timeout=Config.TIMEOUT) as response:
+                if response.status_code == 200:
+                    for line in response.iter_lines():
+                        if line:
+                            body = json.loads(line)
+                            yield body.get('response', '')
+                else:
+                    yield f"Ollama API Hatası: {response.status_code}"
+        except Exception as e:
+            yield f"Ollama Bağlantı Hatası: {str(e)}"
 
     def _stream_openai(self, prompt: str, system_prompt: str) -> Generator[str, None, None]:
-        # 1. Kütüphane Kontrolü
         if openai is None:
-            yield "Hata: OpenAI kütüphanesi yüklü değil."
+            yield "Hata: OpenAI kütüphanesi yüklü değil (pip install openai)."
             return
 
-        # 2. İstemciyi Başlat
         try:
             client = openai.OpenAI(api_key=self.api_key)
-        except Exception as e:
-            yield f"Client Başlatma Hatası: {str(e)}"
-            return
 
-        # 3. İstek ve Akış
-        try:
-            # Değişken adını 'stream' olarak atıyoruz
             stream = client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -248,7 +277,6 @@ class AIService:
                 stream=True
             )
 
-            # Döngüde de aynı 'stream' adını kullanıyoruz
             for chunk in stream:
                 if chunk.choices:
                     content = chunk.choices[0].delta.content
@@ -256,61 +284,36 @@ class AIService:
                         yield content
 
         except Exception as e:
-            yield f"OpenAI Hatası: {str(e)}"
+            yield f"OpenAI API Hatası: {str(e)}"
+
     def _stream_anthropic(self, prompt: str, system_prompt: str) -> Generator[str, None, None]:
-        if not anthropic:
+        if anthropic is None:
             yield "Hata: Anthropic kütüphanesi yüklü değil."
             return
 
-        client = anthropic.Anthropic(api_key=self.api_key)
-        with client.messages.stream(
-                max_tokens=1024,
-                system=system_prompt,
-                messages=[{"role": "user", "content": prompt}],
-                model=self.model
-        ) as stream:
-            for text in stream.text_stream:
-                yield text
+        try:
+            client = anthropic.Anthropic(api_key=self.api_key)
+            with client.messages.stream(
+                    max_tokens=1024,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": prompt}],
+                    model=self.model
+            ) as stream:
+                for text in stream.text_stream:
+                    yield text
+        except Exception as e:
+            yield f"Anthropic Hatası: {str(e)}"
 
     def _stream_google(self, prompt: str) -> Generator[str, None, None]:
-        if not genai:
+        if genai is None:
             yield "Hata: Google Generative AI kütüphanesi yüklü değil."
             return
 
-        genai.configure(api_key=self.api_key)
-        model = genai.GenerativeModel(self.model)
-        response = model.generate_content(prompt, stream=True)
-        for chunk in response:
-            yield chunk.text
-
-class FileHandler:
-    @staticmethod
-    def extract_text_from_file(uploaded_file) -> str:
-        """Yüklenen dosyadan metin içeriğini çıkarır (PDF, DOCX, TXT)."""
-        text = ""
         try:
-            # Dosya uzantısını kontrol et
-            file_type = uploaded_file.name.split('.')[-1].lower()
-
-            if file_type == 'pdf':
-                reader = PyPDF2.PdfReader(uploaded_file)
-                for page in reader.pages:
-                    text += page.extract_text() + "\n"
-
-            elif file_type in ['docx', 'doc']:
-                doc = Document(uploaded_file)
-                for para in doc.paragraphs:
-                    text += para.text + "\n"
-
-            elif file_type == 'txt':
-                # BytesIO'dan string'e çevir
-                text = uploaded_file.getvalue().decode("utf-8")
-
-            else:
-                return f"Desteklenmeyen dosya formatı: {file_type}"
-
-            # Token sınırını aşmamak için çok uzun metinleri kırpalım (yaklaşık 15.000 karakter)
-            return text[:15000] + ("..." if len(text) > 15000 else "")
-
+            genai.configure(api_key=self.api_key)
+            model = genai.GenerativeModel(self.model)
+            response = model.generate_content(prompt, stream=True)
+            for chunk in response:
+                yield chunk.text
         except Exception as e:
-            return f"Dosya okunurken hata oluştu: {str(e)}"
+            yield f"Google AI Hatası: {str(e)}"
