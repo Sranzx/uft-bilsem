@@ -1,0 +1,18 @@
+# --- Ana Uygulama ve Arayüz ---
+streamlit
+pandas
+requests
+rich
+
+# --- Dosya İşleme (PDF ve Word) ---
+PyPDF2
+python-docx
+
+# --- Yapay Zeka Sağlayıcıları (Opsiyonel ama kodda var) ---
+openai
+anthropic
+google-generativeai
+
+# --- EXE Oluşturma ve Paketleme ---
+pyinstaller
+auto-py-to-exe
