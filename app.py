@@ -3,7 +3,6 @@ import json
 import requests
 import pandas as pd
 import time
-import threading
 import os
 from datetime import datetime
 from streamlit.runtime import get_instance  # Oturum kontrolü için gerekli
