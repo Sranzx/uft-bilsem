@@ -25,23 +25,37 @@ manager = StudentManager()
 
 
 # ---------------------------------------------------------
-# 1. BEKÇİ FONKSİYONU (WATCHDOG)
+# 1. BEKÇİ FONKSİYONU (WATCHDOG) - GÜNCELLENMİŞ VERSİYON
 # ---------------------------------------------------------
 def browser_watcher():
     """
     Arka planda çalışır. Tarayıcı bağlantısı koparsa (sekme kapanırsa),
     son veriyi kaydeder ve programı kapatır.
+    (Streamlit'in farklı sürümleriyle uyumludur.)
     """
     time.sleep(5)  # Programın açılması için süre ver
     print("👀 Tarayıcı izleyicisi aktif...")
 
     while True:
         try:
-            # Aktif oturum sayısını kontrol et
+            # Runtime örneğini al
             runtime = get_instance()
+
+            active_sessions = 1  # Varsayılan olarak 1 kabul edelim ki hata olursa kapanmasın
+
             if runtime:
-                session_infos = runtime._session_manager._session_info_by_id
-                active_sessions = len(session_infos)
+                # 1. Yöntem: Yeni Sürümler (_client_mgr)
+                if hasattr(runtime, "_client_mgr"):
+                    active_sessions = len(runtime._client_mgr.list_active_sessions())
+
+                # 2. Yöntem: Ara Sürümler (_session_mgr)
+                elif hasattr(runtime, "_session_mgr"):
+                    active_sessions = len(runtime._session_mgr.list_active_sessions())
+
+                # 3. Yöntem: Eski Sürümler (_session_manager)
+                elif hasattr(runtime, "_session_manager"):
+                    # Eski yapıda session_info_by_id bir sözlüktür
+                    active_sessions = len(runtime._session_manager._session_info_by_id)
 
                 # Eğer bağlı kimse kalmadıysa (Tarayıcı kapandıysa)
                 if active_sessions == 0:
@@ -60,39 +74,11 @@ def browser_watcher():
                     os._exit(0)  # Python sürecini tamamen öldür
 
         except Exception as e:
-            # Hata olsa bile döngüyü kırma
-            print(f"Watcher Hatası: {e}")
+            # Hata olsa bile döngüyü kırma, sadece logla
+            # Bu sayede watcher çökse bile ana program çalışmaya devam eder
+            print(f"Watcher Hatası (Görmezden geliniyor): {e}")
 
         time.sleep(2)  # 2 saniyede bir kontrol et
-
-
-# İzleyici Thread'ini başlat (Sadece bir kez)
-if 'watcher_thread_started' not in st.session_state:
-    t = threading.Thread(target=browser_watcher, daemon=True)
-    t.start()
-    st.session_state.watcher_thread_started = True
-
-# ---------------------------------------------------------
-# 2. SAYFA KONFİGÜRASYONU
-# ---------------------------------------------------------
-st.set_page_config(
-    page_title="Ollama Student Analyst",
-    page_icon="🎓",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Özel CSS
-st.markdown("""
-<style>
-    .main { background-color: #0e1117; }
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; font-weight: bold;}
-    h1, h2, h3 { color: #4facfe; }
-    .metric-card { background-color: #262730; padding: 15px; border-radius: 10px; border-left: 5px solid #4facfe; }
-</style>
-""", unsafe_allow_html=True)
-
-
 # ---------------------------------------------------------
 # 3. YARDIMCI FONKSİYONLAR
 # ---------------------------------------------------------
