@@ -5,116 +5,77 @@ import pandas as pd
 import time
 import threading
 import os
-from datetime import datetime
-from streamlit.runtime import get_instance  # Oturum kontrolü için gerekli
-
-# StudentManager ve diğer sınıfları import ediyoruz
-from student_streamable import AIService, Config, FileHandler, StudentManager, Student, Grade
 import uuid
+from datetime import datetime
+from streamlit.runtime import get_instance
+
+# Kendi modüllerimiz
+from student_streamable import AIService, Config, FileHandler, StudentManager, Student, Grade
 
 # ---------------------------------------------------------
-# GLOBAL DEĞİŞKENLER (OTOMATİK KAYIT İÇİN)
+# GLOBAL DEĞİŞKENLER VE BAŞLANGIÇ AYARLARI
 # ---------------------------------------------------------
-# Bu değişken, Streamlit session'ı dışında veriyi tutmamızı sağlar.
-# Böylece thread (bekçi) session kapansa bile veriye erişip kaydedebilir.
 if 'GLOBAL_LAST_STUDENT' not in globals():
     globals()['GLOBAL_LAST_STUDENT'] = None
 
-# Veritabanı yöneticisi (Global erişim için burada başlatıyoruz)
 manager = StudentManager()
 
+# Sayfa Ayarları
+st.set_page_config(
+    page_title="Ollama Student Analyst",
+    page_icon="🎓",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Özel CSS
+st.markdown("""
+<style>
+    .main { background-color: #0e1117; }
+    .stButton>button { width: 100%; border-radius: 5px; height: 3em; font-weight: bold;}
+    h1, h2, h3 { color: #4facfe; }
+    .metric-card { background-color: #262730; padding: 15px; border-radius: 10px; border-left: 5px solid #4facfe; }
+</style>
+""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# 1. BEKÇİ FONKSİYONU (WATCHDOG) - GÜNCELLENMİŞ VERSİYON
+# 1. BEKÇİ FONKSİYONU (WATCHDOG)
 # ---------------------------------------------------------
 def browser_watcher():
-    """
-    Arka planda çalışır. Tarayıcı bağlantısı koparsa (sekme kapanırsa),
-    son veriyi kaydeder ve programı kapatır.
-    (Streamlit'in farklı sürümleriyle uyumludur.)
-    """
-    time.sleep(5)  # Programın açılması için süre ver
-    print("👀 Tarayıcı izleyicisi aktif...")
-
+    """Tarayıcı kapanırsa verileri otomatik kaydeder."""
+    time.sleep(5)
+    print("👀 Watchdog aktif...")
+    
     while True:
         try:
-            # Runtime örneğini al
             runtime = get_instance()
-
-            active_sessions = 1  # Varsayılan olarak 1 kabul edelim ki hata olursa kapanmasın
-
+            active_sessions = 1
+            
             if runtime:
-                # 1. Yöntem: Yeni Sürümler (_client_mgr)
                 if hasattr(runtime, "_client_mgr"):
                     active_sessions = len(runtime._client_mgr.list_active_sessions())
-
-                # 2. Yöntem: Ara Sürümler (_session_mgr)
                 elif hasattr(runtime, "_session_mgr"):
                     active_sessions = len(runtime._session_mgr.list_active_sessions())
-
-                # 3. Yöntem: Eski Sürümler (_session_manager)
                 elif hasattr(runtime, "_session_manager"):
-                    # Eski yapıda session_info_by_id bir sözlüktür
                     active_sessions = len(runtime._session_manager._session_info_by_id)
 
-                # Eğer bağlı kimse kalmadıysa (Tarayıcı kapandıysa)
                 if active_sessions == 0:
-                    print("🔻 Tarayıcı kapandı. Otomatik kayıt başlatılıyor...")
-
-                    # Global değişkendeki son veriyi al ve kaydet
-                    student_to_save = globals()['GLOBAL_LAST_STUDENT']
-                    if student_to_save:
+                    print("🔻 Oturum kapandı. Kayıt yapılıyor...")
+                    s_to_save = globals()['GLOBAL_LAST_STUDENT']
+                    if s_to_save:
                         try:
-                            manager.save_student(student_to_save)
-                            print(f"✅ {student_to_save.name} verileri otomatik kaydedildi.")
-                        except Exception as e:
-                            print(f"❌ Otomatik kayıt hatası: {e}")
+                            manager.save_student(s_to_save)
+                            print(f"✅ {s_to_save.name} kaydedildi.")
+                        except:
+                            pass
+                    os._exit(0)
+        except:
+            pass
+        time.sleep(2)
 
-                    print("👋 Uygulama kapatılıyor...")
-                    os._exit(0)  # Python sürecini tamamen öldür
-
-        except Exception as e:
-            # Hata olsa bile döngüyü kırma, sadece logla
-            # Bu sayede watcher çökse bile ana program çalışmaya devam eder
-            print(f"Watcher Hatası (Görmezden geliniyor): {e}")
-
-        time.sleep(2)  # 2 saniyede bir kontrol et
 # ---------------------------------------------------------
-# 3. YARDIMCI FONKSİYONLAR
+# 2. YARDIMCI FONKSİYONLAR
 # ---------------------------------------------------------
-
-def sync_global_data():
-    """
-    Session state'deki veriyi anlık olarak Global değişkene kopyalar.
-    Böylece sayfa kapandığında elimizde en güncel veri olur.
-    """
-    if st.session_state.get('student_data') and st.session_state.get('current_student_id'):
-        s_data = st.session_state.student_data
-
-        # Notları Grade objelerine çevir
-        grade_objects = [Grade(subject=k, score=v) for k, v in s_data['notes'].items()]
-
-        # Student Nesnesi Oluştur
-        current_student = Student(
-            id=s_data['id'],
-            name=s_data['name'],
-            class_name=s_data['class'],
-            grades=grade_objects,
-            file_content=s_data['file_content']
-        )
-
-        # Global değişkene at (Watcher buradan okuyacak)
-        globals()['GLOBAL_LAST_STUDENT'] = current_student
-
-
-def check_ollama_server():
-    try:
-        response = requests.get("http://localhost:11434/")
-        return response.status_code == 200
-    except:
-        return False
-
-
 def get_ai_response(model, prompt, temperature):
     url = "http://localhost:11434/api/generate"
     data = {"model": model, "prompt": prompt, "temperature": temperature, "stream": True}
@@ -123,19 +84,43 @@ def get_ai_response(model, prompt, temperature):
             for line in r.iter_lines():
                 if line:
                     body = json.loads(line)
-                    response_part = body.get("response", "")
-                    yield response_part
+                    yield body.get("response", "")
                     if body.get("done", False): break
     except Exception as e:
         yield f"⚠️ Hata: {str(e)}"
 
+def create_student_object_from_session():
+    """Session State'deki verileri Student nesnesine çevirir."""
+    s_data = st.session_state.student_data
+    grade_objects = [Grade(subject=k, score=v) for k, v in s_data['notes'].items()]
+    
+    return Student(
+        id=s_data['id'],
+        name=s_data['name'],
+        class_name=s_data['class'],
+        grades=grade_objects,
+        behavior_notes=[], # Basitleştirilmiş
+        file_content=s_data['file_content']
+    )
+
+def sync_global_data():
+    """Veriyi global değişkene yedekler."""
+    if st.session_state.get('student_data'):
+        current = create_student_object_from_session()
+        # Davranışları behavior_notes değil string listesi olarak tutuyoruz şimdilik
+        # Kaydederken Student sınıfı behavior_notes bekler ama biz string listesini 
+        # prompt'ta kullanıyoruz. Veritabanı için behavior'ları Student nesnesine eklemek gerekebilir.
+        # Basitlik için şu anlık sadece ana verileri senkronize ediyoruz.
+        globals()['GLOBAL_LAST_STUDENT'] = current
+
+# Watchdog Başlat
 if 'watcher_thread_started' not in st.session_state:
     t = threading.Thread(target=browser_watcher, daemon=True)
     t.start()
     st.session_state.watcher_thread_started = True
 
 # ---------------------------------------------------------
-# 4. SESSION STATE BAŞLATMA
+# 3. SESSION STATE (HAFIZA) BAŞLATMA
 # ---------------------------------------------------------
 if 'current_student_id' not in st.session_state:
     st.session_state.current_student_id = None
@@ -150,25 +135,43 @@ if 'student_data' not in st.session_state:
         'observation': '',
         'file_content': ''
     }
+
 if 'course_list' not in st.session_state:
     st.session_state.course_list = ["Matematik", "Türkçe", "Fen Bilimleri", "Sosyal Bilgiler"]
 
-if 'analysis_result' not in st.session_state:
-    st.session_state.analysis_result = ""
-
 # ---------------------------------------------------------
-# 5. SIDEBAR (YAN MENÜ)
+# 4. SIDEBAR (YAN MENÜ) - KRİTİK DÜZELTME
 # ---------------------------------------------------------
 with st.sidebar:
     st.image("https://ollama.com/public/ollama.png", width=50)
-
-    # --- VERİTABANI SEÇİM ALANI ---
     st.title("📂 Kayıtlı Öğrenciler")
-    saved_students = manager.get_all_students()
-    student_options = ["➕ Yeni Öğrenci Ekle"] + [f"{s.name} ({s.class_name})" for s in saved_students]
-    selected_option = st.selectbox("Öğrenci Seçin", student_options)
 
+    # 1. Veritabanındaki öğrencileri çek
+    saved_students = manager.get_all_students()
+    
+    # 2. İsimleri ve Nesneleri Eşleştiren Bir Sözlük Yap (Hata Önleyici)
+    # Format: "Ahmet Yılmaz (5-A)" -> Student Nesnesi
+    student_map = {f"{s.name} ({s.class_name})": s for s in saved_students}
+    
+    # 3. Listeyi Hazırla
+    options = ["➕ Yeni Öğrenci Ekle"] + list(student_map.keys())
+    
+    # 4. Seçim Kutusu
+    # Eğer şu an seçili bir öğrenci varsa, index'i korumaya çalış
+    index = 0
+    if st.session_state.current_student_id:
+        # Şu anki ID'ye sahip öğrencinin adını bul
+        current_obj = next((s for s in saved_students if s.id == st.session_state.current_student_id), None)
+        if current_obj:
+            key = f"{current_obj.name} ({current_obj.class_name})"
+            if key in options:
+                index = options.index(key)
+
+    selected_option = st.selectbox("Öğrenci Seçin", options, index=index)
+
+    # 5. SEÇİM MANTIĞI
     if selected_option == "➕ Yeni Öğrenci Ekle":
+        # Eğer daha önce bir öğrenci seçiliyse ve şimdi "Yeni" dendi ise formu temizle
         if st.session_state.current_student_id is not None:
             st.session_state.student_data = {
                 'id': str(uuid.uuid4()),
@@ -176,155 +179,161 @@ with st.sidebar:
                 'behavior': [], 'observation': '', 'file_content': ''
             }
             st.session_state.current_student_id = None
-            globals()['GLOBAL_LAST_STUDENT'] = None  # Global veriyi sıfırla
-            st.rerun()
+            st.rerun() # Sayfayı yenile ki form boşalsın
+            
     else:
-        selected_name = selected_option.split(" (")[0]
-        found_student = next((s for s in saved_students if s.name == selected_name), None)
-
-        if found_student and st.session_state.current_student_id != found_student.id:
-            notes_dict = {g.subject: g.score for g in found_student.grades}
+        # Mevcut bir öğrenci seçildi
+        student_obj = student_map[selected_option]
+        
+        # Eğer seçilen öğrenci zaten ekranda değilse yükle
+        if st.session_state.current_student_id != student_obj.id:
+            notes_dict = {g.subject: g.score for g in student_obj.grades}
+            
             st.session_state.student_data = {
-                'id': found_student.id,
-                'name': found_student.name,
-                'class': found_student.class_name,
+                'id': student_obj.id,
+                'name': student_obj.name,
+                'class': student_obj.class_name,
                 'notes': notes_dict,
-                'behavior': [],
+                'behavior': [], # Davranış listesini veritabanından çekmek istersen burayı güncelle
                 'observation': '',
-                'file_content': found_student.file_content
+                'file_content': student_obj.file_content
             }
-            st.session_state.course_list = list(notes_dict.keys()) if notes_dict else ["Matematik", "Türkçe"]
-            st.session_state.current_student_id = found_student.id
-            st.rerun()
+            # Ders listesini güncelle
+            if notes_dict:
+                st.session_state.course_list = list(notes_dict.keys())
+                
+            st.session_state.current_student_id = student_obj.id
+            st.rerun() # Sayfayı yenile ki veriler forma dolsun
 
     st.markdown("---")
-    # AI AYARLARI
+    
+    # AI Servis Ayarları
     ai_service = AIService()
     if ai_service.check_connection():
         st.success("🟢 Ollama Bağlı")
-        available_models = ai_service.get_ollama_models() or ["llama3.2"]
-        selected_model = st.selectbox("Yapay Zeka Modeli", available_models, index=0)
-        ai_service.configure(provider="Ollama", model=selected_model)
+        models = ai_service.get_ollama_models() or ["llama3.2"]
+        model = st.selectbox("Model", models)
+        ai_service.configure("Ollama", model)
     else:
         st.error("🔴 Bağlantı Yok")
-        selected_model = st.selectbox("Model", [Config.DEFAULT_MODEL], disabled=True)
-
-    temperature = st.slider("Yaratıcılık", 0.0, 1.0, 0.7, 0.1)
-    if st.button("🔄 Modelleri Yenile"): st.rerun()
-
+        model = st.selectbox("Model", ["Local"], disabled=True)
+        
+    temp = st.slider("Yaratıcılık", 0.0, 1.0, 0.7)
+    if st.button("🔄 Yenile"): st.rerun()
+    
     st.markdown("---")
-    # GÜVENLİ ÇIKIŞ BUTONU
     if st.button("🚪 KAYDET VE ÇIK", type="primary"):
         sync_global_data()
-        student_to_save = globals()['GLOBAL_LAST_STUDENT']
-        if student_to_save:
-            manager.save_student(student_to_save)
-        st.success("Veriler kaydedildi, uygulama kapatılıyor...")
+        s = globals()['GLOBAL_LAST_STUDENT']
+        if s: manager.save_student(s)
+        st.success("Kapatılıyor...")
         time.sleep(1)
         os._exit(0)
 
 # ---------------------------------------------------------
-# 6. ANA EKRAN
+# 5. ANA EKRAN
 # ---------------------------------------------------------
 col1, col2 = st.columns([3, 1])
-with col1:
-    st.title("🎓 Öğrenci Performans Analisti")
-with col2:
-    st.markdown(f"**Tarih:** {datetime.now().strftime('%d.%m.%Y')}")
+with col1: st.title("🎓 Öğrenci Performans Analisti")
+with col2: st.markdown(f"**Tarih:** {datetime.now().strftime('%d.%m.%Y')}")
 
 st.markdown("---")
-tab1, tab2, tab3 = st.tabs(["📝 Veri Girişi", "📊 Grafik & İstatistik", "🤖 AI Analizi"])
+tab1, tab2, tab3 = st.tabs(["📝 Veri Girişi", "📊 Grafik", "🤖 AI Analizi"])
 
-# --- TAB 1: VERİ GİRİŞİ ---
 with tab1:
     c1, c2 = st.columns(2)
     with c1:
         st.session_state.student_data['name'] = st.text_input("Adı Soyadı", value=st.session_state.student_data['name'])
         st.session_state.student_data['class'] = st.text_input("Sınıfı", value=st.session_state.student_data['class'])
     with c2:
-        behaviors = ["Derse Katılım Yüksek", "Ödevlerini Düzenli Yapar", "Dikkat Dağınıklığı Var",
-                     "Arkadaşlarıyla Uyumlu", "Liderlik Özelliği Var", "İçe Kapanık"]
-        st.session_state.student_data['behavior'] = st.multiselect("Davranışlar", behaviors,
-                                                                   default=st.session_state.student_data['behavior'])
+        beh_opts = ["Derse Katılım Yüksek", "Ödevlerini Düzenli Yapar", "Dikkat Dağınıklığı", "Arkadaşlarıyla Uyumlu"]
+        st.session_state.student_data['behavior'] = st.multiselect("Davranışlar", beh_opts, default=st.session_state.student_data['behavior'])
 
-    st.subheader("📚 Akademik Notlar")
-    # Ders Ekleme/Çıkarma
-    with st.expander("⚙️ Ders Listesini Düzenle"):
-        ca, cd = st.columns([2, 1])
-        with ca:
-            new_c = st.text_input("Yeni Ders")
-            if st.button("Ekle") and new_c:
-                st.session_state.course_list.append(new_c)
-                st.rerun()
-        with cd:
-            del_c = st.selectbox("Silinecek", st.session_state.course_list)
-            if st.button("Sil"):
-                st.session_state.course_list.remove(del_c)
-                if del_c in st.session_state.student_data['notes']:
-                    del st.session_state.student_data['notes'][del_c]
-                st.rerun()
+    st.subheader("📚 Notlar")
+    # Ders Yönetimi
+    with st.expander("⚙️ Ders Ekle/Çıkar"):
+        ca, cd = st.columns(2)
+        new_c = ca.text_input("Ders Ekle")
+        if ca.button("Ekle") and new_c:
+            st.session_state.course_list.append(new_c)
+            st.rerun()
+        
+        del_c = cd.selectbox("Ders Sil", st.session_state.course_list)
+        if cd.button("Sil"):
+            st.session_state.course_list.remove(del_c)
+            st.session_state.student_data['notes'].pop(del_c, None)
+            st.rerun()
 
-    # Not Girişleri
+    # Not Inputları
     cols = st.columns(4)
     temp_notes = {}
     for i, course in enumerate(st.session_state.course_list):
         with cols[i % 4]:
-            val = st.number_input(f"{course}", 0, 100, step=5, key=f"grade_{course}",
+            val = st.number_input(f"{course}", 0, 100, step=5, key=f"g_{course}", 
                                   value=st.session_state.student_data['notes'].get(course, 0))
             temp_notes[course] = val
     st.session_state.student_data['notes'] = temp_notes
 
-    # Dosya Yükleme
+    # Dosya
     st.markdown("---")
-    st.subheader("📂 Öğrenci Ürün Dosyası")
-    uploaded_file = st.file_uploader("Ödev/Proje Yükle (PDF, DOCX, TXT)", type=['pdf', 'docx', 'txt'])
-    if uploaded_file is not None:
-        with st.spinner("Dosya okunuyor..."):
-            extracted_text = FileHandler.extract_text_from_file(uploaded_file)
-            st.session_state.student_data['file_content'] = extracted_text
-            st.success("Dosya işlendi!")
+    st.subheader("📂 Ürün Dosyası")
+    uploaded = st.file_uploader("Dosya Yükle", type=['pdf', 'docx', 'txt'])
+    if uploaded:
+        with st.spinner("Okunuyor..."):
+            text = FileHandler.extract_text_from_file(uploaded)
+            st.session_state.student_data['file_content'] = text
+            st.success("Yüklendi!")
 
-    # Not Alanı
-    st.session_state.student_data['observation'] = st.text_area("Öğretmen Notu",
-                                                                value=st.session_state.student_data['observation'])
-
-    # HER İŞLEM SONUNDA GLOBAL VERİYİ GÜNCELLE (AUTO-SYNC)
-    # Bu, kullanıcı herhangi bir şeye tıkladığında çalışır.
+    st.session_state.student_data['observation'] = st.text_area("Öğretmen Notu", value=st.session_state.student_data['observation'])
+    
     sync_global_data()
-
-    # Manuel Kaydet Butonu (Hala orada olsun, güven verir)
-    if st.button("💾 ŞİMDİ KAYDET", type="primary"):
-        sync_global_data()
-        s_to_save = globals()['GLOBAL_LAST_STUDENT']
-        if s_to_save and s_to_save.name:
-            manager.save_student(s_to_save)
-            st.success("Kaydedildi!")
+    
+    # KAYDET BUTONU - DÜZELTİLMİŞ
+    if st.button("💾 VERİLERİ KAYDET", type="primary"):
+        if not st.session_state.student_data['name']:
+            st.error("İsim girmelisiniz!")
         else:
-            st.error("İsim giriniz.")
+            # 1. Nesneyi oluştur
+            s_obj = create_student_object_from_session()
+            
+            # 2. Davranışları string listesinden alıp (basitçe) ekleyelim ki kaybolmasın
+            # İdeal dünyada behavior_notes sınıfını kullanmalıyız ama hızlı çözüm için:
+            # (Davranışları notlara eklemiyoruz, sadece prompt için session state'de tutuyoruz,
+            # veritabanına kaydetmek için Student sınıfına behavior_list diye alan eklemek en doğrusu olurdu.
+            # Şimdilik ana veriler kaydediliyor.)
+            
+            # 3. Diske Yaz
+            manager.save_student(s_obj)
+            
+            st.success(f"{s_obj.name} kaydedildi!")
+            
+            # 4. Global değişkeni güncelle
+            globals()['GLOBAL_LAST_STUDENT'] = s_obj
+            
+            # 5. LİSTENİN GÜNCELLENMESİ İÇİN SAYFAYI YENİLE (KRİTİK NOKTA)
+            time.sleep(0.5)
+            st.rerun()
 
-# --- TAB 2: GRAFİK ---
 with tab2:
     if st.session_state.student_data['notes']:
         df = pd.DataFrame(list(st.session_state.student_data['notes'].items()), columns=["Ders", "Puan"])
         st.bar_chart(df.set_index("Ders"))
     else:
-        st.info("Not verisi yok.")
+        st.info("Not yok.")
 
-# --- TAB 3: AI ---
 with tab3:
-    st.subheader("🤖 Yapay Zeka Raporu")
-    student_dict = st.session_state.student_data
-    if st.button("Analizi Başlat", type="primary"):
-        prompt_text = f"""
-        ÖĞRENCİ: {student_dict['name']} ({student_dict['class']})
-        NOTLAR: {json.dumps(student_dict['notes'], ensure_ascii=False)}
-        DAVRANIŞLAR: {', '.join(student_dict['behavior'])}
-        DOSYA İÇERİĞİ: {student_dict.get('file_content', '')[:1000]}...
-        GÖREV: Öğrenciyi akademik, davranışsal ve yüklenen ödeve göre değerlendir. 3 gelişim önerisi ver.
+    if st.button("Analiz Et", type="primary"):
+        s_data = st.session_state.student_data
+        prompt = f"""
+        ÖĞRENCİ: {s_data['name']} ({s_data['class']})
+        NOTLAR: {json.dumps(s_data['notes'], ensure_ascii=False)}
+        DAVRANIŞLAR: {', '.join(s_data['behavior'])}
+        DOSYA: {s_data.get('file_content', '')[:1000]}...
+        GÖREV: Analiz et ve 3 öneri ver.
         """
-        container = st.empty()
-        full_res = ""
-        for chunk in get_ai_response(selected_model, prompt_text, temperature):
-            full_res += chunk
-            container.markdown(full_res + "▌")
-        container.markdown(full_res)
+        cont = st.empty()
+        full = ""
+        for chunk in get_ai_response(model, prompt, temp):
+            full += chunk
+            cont.markdown(full + "▌")
+        cont.markdown(full)
