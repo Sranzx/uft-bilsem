@@ -4,9 +4,8 @@ import requests
 import pandas as pd
 import time
 from datetime import datetime
-from student_streamable import FileHandler
-from student_streamable import AIService, Config
-
+from student_streamable import AIService, Config, FileHandler, StudentManager, Student, Grade
+import uuid
 # ---------------------------------------------------------
 # 1. SAYFA KONFİGÜRASYONU
 # ---------------------------------------------------------
@@ -65,15 +64,21 @@ def get_ai_response(model, prompt, temperature):
                         break
     except Exception as e:
         yield f"⚠️ Hata: {str(e)}"
-
-
 # ---------------------------------------------------------
-# 3. SESSION STATE (Hafıza Yönetimi)
+# 3. VERİTABANI VE HAFIZA YÖNETİMİ
 # ---------------------------------------------------------
 
-# Öğrenci Verileri
+# Veritabanı yöneticisini başlat
+manager = StudentManager()
+
+# Session State Başlatma
+if 'current_student_id' not in st.session_state:
+    st.session_state.current_student_id = None
+
 if 'student_data' not in st.session_state:
+    # Boş bir form şablonu
     st.session_state.student_data = {
+        'id': str(uuid.uuid4()),
         'name': '',
         'class': '',
         'notes': {},
@@ -81,22 +86,72 @@ if 'student_data' not in st.session_state:
         'observation': '',
         'file_content': ''
     }
-
-# Ders Listesi (Varsayılanlar)
 if 'course_list' not in st.session_state:
     st.session_state.course_list = ["Matematik", "Türkçe", "Fen Bilimleri", "Sosyal Bilgiler"]
 
 if 'analysis_result' not in st.session_state:
     st.session_state.analysis_result = ""
-
 # ---------------------------------------------------------
 # 4. SIDEBAR (YAN MENÜ)
 # ---------------------------------------------------------
 with st.sidebar:
     st.image("https://ollama.com/public/ollama.png", width=50)
-    st.title("Ayarlar")
-    st.markdown("---")
 
+    # --- VERİTABANI SEÇİM ALANI ---
+    st.title("📂 Kayıtlı Öğrenciler")
+
+    # Tüm öğrencileri veritabanından çek
+    saved_students = manager.get_all_students()
+
+    # Seçim listesi oluştur: [Yeni Öğrenci, Ahmet Yılmaz, Ayşe Demir...]
+    student_options = ["➕ Yeni Öğrenci Ekle"] + [f"{s.name} ({s.class_name})" for s in saved_students]
+
+    selected_option = st.selectbox("Öğrenci Seçin", student_options)
+
+    # SEÇİM MANTIĞI
+    if selected_option == "➕ Yeni Öğrenci Ekle":
+        # Eğer kullanıcı "Yeni" dedi ve daha önce bir id seçiliydiyse sıfırla
+        if st.session_state.current_student_id is not None:
+            st.session_state.student_data = {
+                'id': str(uuid.uuid4()),
+                'name': '',
+                'class': '',
+                'notes': {},
+                'behavior': [],
+                'observation': '',
+                'file_content': ''
+            }
+            st.session_state.current_student_id = None
+            st.rerun()
+
+    else:
+        # Mevcut bir öğrenci seçildiyse
+        # Seçilen ismin hangi öğrenci objesine denk geldiğini bulalım
+        # Basit bir eşleştirme (isim çakışması varsa ID kullanmak daha doğrudur ama şimdilik bu yeterli)
+        selected_name = selected_option.split(" (")[0]
+        found_student = next((s for s in saved_students if s.name == selected_name), None)
+
+        if found_student and st.session_state.current_student_id != found_student.id:
+            # Veriyi JSON'dan Session State'e aktar
+            notes_dict = {g.subject: g.score for g in found_student.grades}
+
+            st.session_state.student_data = {
+                'id': found_student.id,
+                'name': found_student.name,
+                'class': found_student.class_name,
+                'notes': notes_dict,
+                'behavior': [],  # Davranış notları basit string listesi olmadığı için burada sadeleştiriyoruz
+                'observation': '',  # Gözlem notunu ayrıca tutmak isterseniz Student sınıfına eklemelisiniz
+                'file_content': found_student.file_content
+            }
+            # Ders listesini öğrencinin derslerine göre güncelle
+            st.session_state.course_list = list(notes_dict.keys()) if notes_dict else ["Matematik", "Türkçe"]
+
+            st.session_state.current_student_id = found_student.id
+            st.rerun()
+
+    st.markdown("---")
+    # ... (Buradan sonra mevcut Ayarlar/Model seçimi kodlarınız devam etsin) ...
     # Servis örneğini oluştur
     ai_service = AIService()
 

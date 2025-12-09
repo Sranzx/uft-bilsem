@@ -59,6 +59,8 @@ class Student:
     grades: List[Grade] = field(default_factory=list)
     behavior_notes: List[BehaviorNote] = field(default_factory=list)
     ai_insights: List[AIInsight] = field(default_factory=list)
+    # YENİ EKLENEN ALAN: Dosya içeriğini kaydetmek için
+    file_content: str = ""
     last_updated: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     def to_dict(self) -> Dict:
@@ -66,6 +68,8 @@ class Student:
 
     @classmethod
     def from_dict(cls, data: Dict):
+        # Bu kısım JSON'dan okurken hata almamak için önemlidir
+        # Eğer eski kayıtlarda 'file_content' yoksa boş string atarız.
         required_keys = {"id", "name", "class_name"}
         if not required_keys.issubset(data.keys()):
             raise ValueError(f"Eksik anahtarlar: {required_keys - data.keys()}")
@@ -74,8 +78,12 @@ class Student:
         notes = [BehaviorNote(**n) for n in data.get("behavior_notes", [])]
         insights = [AIInsight(**i) for i in data.get("ai_insights", [])]
 
+        # Güvenli veri çekme
         valid_keys = {k for k in data if k in cls.__annotations__}
         filtered_data = {k: data[k] for k in valid_keys}
+
+        # file_content alanını manuel kontrol et
+        file_content = data.get("file_content", "")
 
         return cls(
             **filtered_data,
@@ -83,7 +91,6 @@ class Student:
             behavior_notes=notes,
             ai_insights=insights
         )
-
 
 class StudentManager:
     def __init__(self):
