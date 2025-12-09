@@ -11,33 +11,35 @@ icon_file = "uft.ico"
 
 print(f"📍 Streamlit dizini: {streamlit_dir}")
 
+# İşletim sistemi ayracı (Windows için ; Mac/Linux için :)
+sep = os.pathsep
+
 # Komut listesini hazırlıyoruz
 commands = [
     'run_app.py',                       # Başlatıcı dosya
     '--onefile',                        # Tek dosya
     '--name=UFT-BILSEM',                # Exe'nin adı
     '--clean',                          # Önbelleği temizle
-    '--noconsole',                      # Konsol penceresini gizle (Hata ayıklamak isterseniz bu satırı silin)
+    '--noconsole',                      # Konsol penceresini gizle
     
-    # --- 1. HATA ÇÖZÜMÜ: EKSİK DOSYALAR (DATA) ---
-    # app.py VE student_streamable.py dosyalarının ikisini de ekliyoruz
-    # Windows için ayraç noktalı virgüldür (;)
-    '--add-data=app.py;.',
-    '--add-data=student_streamable.py;.', 
+    # --- 1. EKSİK DOSYALAR (DATA) ---
+    # Hem app.py hem de student_streamable.py dosyasını exe içine gömüyoruz
+    f'--add-data=app.py{sep}.',
+    f'--add-data=student_streamable.py{sep}.', 
     
-    # --- 2. HATA ÇÖZÜMÜ: ARAYÜZ DOSYALARI ---
-    # Streamlit static dosyalarını ekliyoruz
-    f'--add-data={static_path};streamlit/static',
+    # --- 2. ARAYÜZ DOSYALARI ---
+    # Streamlit static dosyalarını ekliyoruz (index.html hatasını çözer)
+    f'--add-data={static_path}{sep}streamlit/static',
 
-    # --- 3. HATA ÇÖZÜMÜ: GİZLİ MODÜLLER (HIDDEN IMPORTS) ---
-    # PyInstaller'ın göremediği Streamlit modülleri
+    # --- 3. GİZLİ MODÜLLER (HIDDEN IMPORTS) ---
+    # PyInstaller'ın göremediği Streamlit ve diğer modüller
     '--hidden-import=streamlit.runtime.scriptrunner.magic_funcs',
     '--hidden-import=streamlit.runtime.scriptrunner.script_runner',
     '--hidden-import=streamlit.web.cli',
     '--hidden-import=streamlit.runtime.media_file_manager',
     '--hidden-import=streamlit.runtime.memory_media_file_manager',
     
-    # student_streamable.py içindeki kütüphaneler (Bunları elle eklemezsek bulunamayabilir)
+    # Sizin projenizin bağımlılıkları
     '--hidden-import=openai',
     '--hidden-import=anthropic',
     '--hidden-import=google.generativeai',
@@ -51,10 +53,11 @@ commands = [
     # Versiyon bilgileri için şart
     '--copy-metadata=streamlit',
     '--copy-metadata=google-generativeai',
-    '--copy-metadata=tqdm',
-    '--copy-metadata=regex',
     '--copy-metadata=requests',
     '--copy-metadata=packaging',
+    # regex paketini kaldırdım, eğer yukarıdaki pip install regex'i yaptıysanız
+    # aşağıdaki satırın başındaki # işaretini kaldırabilirsiniz.
+    # '--copy-metadata=regex', 
 ]
 
 # Eğer ikon varsa komutlara ekle
@@ -67,4 +70,9 @@ else:
 print("🚀 Derleme işlemi başlıyor...")
 
 # 2. PyInstaller'ı çalıştır
-PyInstaller.__main__.run(commands)
+try:
+    PyInstaller.__main__.run(commands)
+    print("\n✅ İŞLEM BAŞARIYLA TAMAMLANDI!")
+    print("Oluşan dosyayı 'dist' klasöründe bulabilirsiniz.")
+except Exception as e:
+    print(f"\n❌ BİR HATA OLUŞTU: {e}")
