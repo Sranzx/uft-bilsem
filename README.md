@@ -31,7 +31,7 @@ Kodlama bilgisi gerektirmeden uygulamayı doğrudan çalıştırmak için bu yö
 1.  **Ollama Kurulumu:** Uygulamanın beyni olan yapay zeka motorunu çalıştırmak için [Ollama Resmi Web Sitesi](https://ollama.com/)'nden işletim sisteminize uygun sürümü indirin ve kurun.
 2.  **Modelin İndirilmesi:** Terminal veya komut satırını açarak analiz için gerekli modeli indirin:
     ```bash
-    ollama pull llama3.2
+    ollama pull gemma3
     ```
 3.  **Uygulamanın İndirilmesi:**
       * Bu sayfanın sağ tarafında bulunan **[Releases](https://github.com/Sranzx/uft-bilsem/releases)** bölümüne gidin.
