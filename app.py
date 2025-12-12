@@ -15,6 +15,53 @@ from streamlit.runtime import get_instance
 from student_streamable import AIService, Config, FileHandler, StudentManager, Student, Grade, AIInsight, BehaviorNote
 
 # ---------------------------------------------------------
+# SAYFA AYARLARI ve GÜVENLİ RERUN HANDLER
+# ---------------------------------------------------------
+st.set_page_config(
+    page_title="UFT Analiz Sistemi",
+    page_icon="🎓",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Güvenli rerun helper
+def safe_rerun():
+    """
+    Try multiple methods to request a rerun, to be compatible with various Streamlit versions.
+    1) st.experimental_rerun() if present
+    2) raise internal RerunException
+    3) fallback: set needs_rerun True and stop
+    """
+    # 1) public API if available
+    try:
+        if hasattr(st, "experimental_rerun"):
+            try:
+                st.experimental_rerun()
+                return
+            except Exception:
+                # fallthrough to internal method
+                pass
+    except Exception:
+        pass
+
+    # 2) internal API fallback
+    try:
+        from streamlit.runtime.scriptrunner.script_runner import RerunException
+        raise RerunException()
+    except Exception:
+        # 3) final fallback
+        st.session_state['needs_rerun'] = True
+        st.stop()
+
+# Güvenli "rerun" kontrolü: handler'lar sadece bir talep bırakır, ana akış burada güvenle rerun yapar.
+if 'needs_rerun' not in st.session_state:
+    st.session_state['needs_rerun'] = False
+
+# Eğer önceki run bir rerun talebi bırakmışsa, ana bağlamda güvenli şekilde rerun et.
+if st.session_state.pop('needs_rerun', False):
+    safe_rerun()
+
+# ---------------------------------------------------------
 # GLOBAL DEĞİŞKENLER
 # ---------------------------------------------------------
 if 'GLOBAL_LAST_STUDENT' not in globals():
@@ -26,16 +73,8 @@ ai_service = AIService()
 # Ollama bağlantı durumu (module-level global; UI bu değişkenden okur)
 OLLAMA_STATUS = {"connected": False, "last_checked": None}
 
-# Sayfa Ayarları
-st.set_page_config(
-    page_title="UFT Analiz Sistemi",
-    page_icon="🎓",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
 # ---------------------------------------------------------
-# 1. BACKGROUND THREADS
+# BACKGROUND THREADS
 # ---------------------------------------------------------
 def browser_watcher():
     """Tarayıcı kapanırsa verileri otomatik kaydeder."""
@@ -90,7 +129,7 @@ if 'ollama_poller_started' not in st.session_state:
     st.session_state.ollama_poller_started = True
 
 # ---------------------------------------------------------
-# 2. SESSION STATE (HAFIZA) AYARLARI & WIDGET KEYS
+# SESSION STATE (HAFIZA) AYARLARI & WIDGET KEYS
 # ---------------------------------------------------------
 if 'form_data' not in st.session_state:
     st.session_state.form_data = {
@@ -103,7 +142,6 @@ if 'form_data' not in st.session_state:
         "file_content": ""
     }
 
-# widget bindings
 def init_widget_keys():
     if 'form_name' not in st.session_state:
         st.session_state.form_name = st.session_state.form_data.get("name", "")
@@ -130,7 +168,7 @@ if 'course_list' not in st.session_state:
     st.session_state.course_list = ["Matematik", "Türkçe", "Fen Bilimleri", "Sosyal Bilgiler"]
 
 # ---------------------------------------------------------
-# 3. NORMALIZATION, SYNC & HELPERS
+# NORMALIZATION, SYNC & HELPERS
 # ---------------------------------------------------------
 def normalize_name(name: str) -> str:
     if not name:
@@ -177,7 +215,6 @@ def normalize_file_content(text: str, limit: int = 15000) -> str:
     return t
 
 def normalize_form_data():
-    """Normalize st.session_state.form_data in-place and return it."""
     fd = st.session_state.form_data
     fd["name"] = normalize_name(fd.get("name", ""))
     fd["class_name"] = normalize_class_name(fd.get("class_name", ""))
@@ -194,7 +231,6 @@ def form_hash(fd: dict) -> str:
     return hashlib.md5(j.encode('utf-8')).hexdigest()
 
 def apply_form_to_widget_keys():
-    """Copy form_data to top-level widget-bound session keys so widgets update immediately."""
     fd = st.session_state.form_data
     st.session_state.form_name = fd.get("name", "")
     st.session_state.form_class = fd.get("class_name", "")
@@ -213,7 +249,6 @@ def apply_form_to_widget_keys():
             st.session_state.course_list.append(subj)
 
 def sync_widgets_to_form():
-    """Copy widget-bound keys back into form_data (before save)."""
     fd = st.session_state.form_data
     fd["name"] = st.session_state.get("form_name", fd.get("name", ""))
     fd["class_name"] = st.session_state.get("form_class", fd.get("class_name", ""))
@@ -226,10 +261,9 @@ def sync_widgets_to_form():
     st.session_state.form_data = fd
 
 # ---------------------------------------------------------
-# 4. PERSISTENCE WRAPPERS (NORMALIZE BEFORE SAVE)
+# PERSISTENCE (NORMALIZE BEFORE SAVE)
 # ---------------------------------------------------------
 def save_current_form():
-    """Normalize + sync widgets -> form_data and persist via manager."""
     sync_widgets_to_form()
     normalize_form_data()
     data = st.session_state.form_data
@@ -258,7 +292,7 @@ def save_current_form():
     return True
 
 # ---------------------------------------------------------
-# 5. UI HELPERS (diff rendering, details)
+# UI HELPERS (diff rendering, details)
 # ---------------------------------------------------------
 def render_diff_list(diffs):
     for d in diffs:
@@ -290,7 +324,6 @@ def render_diff_list(diffs):
             st.write(f"- Sonra: {d.get('new')}")
 
 def display_student_details(student: Student):
-    """Show and bind student to editable widgets so UI changes are persistent when saved."""
     st.header(f"{student.name} ({student.class_name})")
     cols = st.columns([2, 1])
     with cols[0]:
@@ -340,10 +373,12 @@ def display_student_details(student: Student):
                 st.error(f"🔴 Ollama bağlantısı yok (Son kontrol: {last})")
         with btn_col:
             if st.button("🔄 Yenile", width='stretch'):
+                # Manuel yenileme: talep bırak ve akışı sonlandır (güvenli rerun pattern)
                 conn = ai_service.check_connection()
                 OLLAMA_STATUS["connected"] = bool(conn)
                 OLLAMA_STATUS["last_checked"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-                st.experimental_rerun()
+                st.session_state['needs_rerun'] = True
+                st.stop()
 
         if not OLLAMA_STATUS.get("connected", False):
             st.warning("Ollama kapalıysa terminalde `ollama serve` çalıştırın veya modelin hazır olduğundan emin olun.")
@@ -366,6 +401,9 @@ def display_student_details(student: Student):
                         st.success("✅ Rapor kaydedildi.")
                         st.session_state.form_data = s.to_dict()
                         apply_form_to_widget_keys()
+                        # güvenli yeniden çizim talebi
+                        st.session_state['needs_rerun'] = True
+                        st.stop()
                     except Exception as e:
                         st.error(f"Rapor kaydedilemedi: {e}")
 
@@ -390,15 +428,16 @@ def display_student_details(student: Student):
             render_diff_list(entry.get("diffs", []))
             st.markdown("---")
             if st.button("🔄 Bu versiyona geri yükle", width='stretch'):
-                if manager.restore_from_changelog(student.id, sel_idx):
+                ok = manager.restore_from_changelog(student.id, sel_idx)
+                if ok:
                     st.success("✅ Geri yükleme başarılı. Sayfa yenileniyor...")
-                    time.sleep(1)
-                    st.experimental_rerun()
+                    st.session_state['needs_rerun'] = True
+                    st.stop()
                 else:
                     st.error("❌ Geri yükleme başarısız.")
 
 # ---------------------------------------------------------
-# 6. SIDEBAR
+# SIDEBAR
 # ---------------------------------------------------------
 with st.sidebar:
     st.header("📂 Öğrenci İşlemleri")
@@ -414,7 +453,8 @@ with st.sidebar:
             "file_content": ""
         }
         apply_form_to_widget_keys()
-        st.experimental_rerun()
+        st.session_state['needs_rerun'] = True
+        st.stop()
 
     st.markdown("---")
     st.subheader("📋 Kayıtlı Liste")
@@ -429,10 +469,10 @@ with st.sidebar:
             if target and st.session_state.form_data.get("id") != target.id:
                 st.session_state.form_data = target.to_dict()
                 apply_form_to_widget_keys()
-                st.experimental_rerun()
+                st.session_state['needs_rerun'] = True
+                st.stop()
 
     st.markdown("---")
-    # Auto-save toggle and debounce interval (seconds)
     st.session_state.auto_save = st.checkbox("Otomatik Kaydet (Düzenlemeleri otomatik kaydeder)", value=st.session_state.auto_save)
     st.session_state.auto_save_interval = st.number_input("Otomatik kaydet aralığı (s)", min_value=2, max_value=300, value=int(st.session_state.auto_save_interval), step=1)
     if st.button("🚪 KAYDET VE ÇIK", width='stretch'):
@@ -442,7 +482,7 @@ with st.sidebar:
             os._exit(0)
 
 # ---------------------------------------------------------
-# 7. MAIN FORM UI
+# MAIN FORM UI
 # ---------------------------------------------------------
 st.title("🎓 Öğrenci Performans Sistemi")
 
@@ -451,185 +491,13 @@ with col_save:
     if st.button("💾 KALICI KAYDET", type="primary", width='stretch'):
         if save_current_form():
             st.toast(f"✅ {st.session_state.form_data['name']} kaydedildi!", icon="🎉")
-            time.sleep(1)
-            st.experimental_rerun()
+            st.session_state['needs_rerun'] = True
+            st.stop()
 with col_info:
     st.text(f"Düzenlenen: {st.session_state.form_data.get('name','(yok)')}  —  ID: {st.session_state.form_data.get('id')}")
 
 st.markdown("---")
 
-tab1, tab2, tab3, tab4 = st.tabs(["📝 KİMLİK & NOTLAR", "📄 ÖDEV DOSYASI", "🤖 YAPAY ZEKA", "📚 KAYITLI ÖĞRENCİLER"])
+tab1, tab2, tab3, tab4 = st.tabs(["📝 KİMLİK & NOTLAR", "📄 ÖDEV DOSYASI", "🤖 YAPAY ZEKA", "📚 KAYITLI ÖĞRENCİLER"]) 
 
-# TAB 1: VERİ GİRİŞİ (widget-bound so updates are kept in session)
-with tab1:
-    col1, col2 = st.columns(2)
-    with col1:
-        st.text_input("Adı Soyadı", key="form_name")
-    with col2:
-        st.text_input("Sınıfı", key="form_class")
-
-    st.subheader("📚 Ders Notları")
-    with st.expander("Ders Listesini Düzenle"):
-        c_add, c_del = st.columns(2)
-        new_c = c_add.text_input("Ders Ekle", key="new_course_input")
-        if c_add.button("Ekle", width='stretch'):
-            if new_c and new_c not in st.session_state.course_list:
-                st.session_state.course_list.append(new_c)
-                key = f"grade_{new_c}"
-                st.session_state.grade_keys[new_c] = key
-                st.session_state[key] = 0
-                st.session_state.form_data["notes"][new_c] = 0
-                st.experimental_rerun()
-
-        del_c = c_del.selectbox("Silinecek Ders", st.session_state.course_list, key="del_course_select")
-        if c_del.button("Dersi Sil", width='stretch'):
-            if del_c in st.session_state.course_list:
-                st.session_state.course_list.remove(del_c)
-                key = st.session_state.grade_keys.pop(del_c, None)
-                if key and key in st.session_state:
-                    del st.session_state[key]
-                st.session_state.form_data["notes"].pop(del_c, None)
-                st.experimental_rerun()
-
-    # Not kutuları: bind to per-subject keys
-    for i, course in enumerate(st.session_state.course_list):
-        key = st.session_state.grade_keys.get(course)
-        if not key:
-            key = f"grade_{course}"
-            st.session_state.grade_keys[course] = key
-            st.session_state.setdefault(key, st.session_state.form_data.get("notes", {}).get(course, 0))
-        cols = st.columns(3)
-        with cols[i % 3]:
-            st.number_input(f"{course}", 0, 100, value=st.session_state.get(key, 0), key=key)
-
-    st.subheader("🧠 Davranış Gözlemi")
-    st.multiselect("Gözlemlenen Davranışlar",
-                   ["Derse Katılım Yüksek", "Ödev Eksikliği Var", "Arkadaşlarıyla Uyumlu", "Dikkat Dağınıklığı", "Sorumluluk Sahibi"],
-                   default=st.session_state.get("behavior", []),
-                   key="behavior")
-
-# TAB 2: DOSYA
-with tab2:
-    st.subheader("📂 Dosya Yükle")
-    uploaded = st.file_uploader("PDF / DOCX / TXT", type=['pdf', 'docx', 'txt'], key="uploader")
-    if uploaded:
-        with st.spinner("Okunuyor..."):
-            text = FileHandler.extract_text_from_file(uploaded)
-            st.session_state.form_file_content = text
-            st.session_state.form_data["file_content"] = text
-            st.success("Aktarıldı.")
-    if st.session_state.get("form_file_content"):
-        st.markdown("**Dosya Önizlemesi**")
-        st.write(st.session_state.get("form_file_content")[:5000])
-
-# TAB 3: YAPAY ZEKA
-with tab3:
-    st.subheader("🤖 Yapay Zeka Analizi")
-    connected = OLLAMA_STATUS.get("connected", False)
-    last = OLLAMA_STATUS.get("last_checked")
-    if connected:
-        st.success(f"Ollama bağlantısı: ✅ Model: {ai_service.model} (Son kontrol: {last})")
-    else:
-        st.error(f"Ollama bağlantısı: 🔴 (Son kontrol: {last})")
-
-    if st.button("🔄 Bağlantıyı Yenile (Manuel)", width='stretch'):
-        conn = ai_service.check_connection()
-        OLLAMA_STATUS["connected"] = bool(conn)
-        OLLAMA_STATUS["last_checked"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        st.experimental_rerun()
-
-    if connected:
-        if st.session_state.get("form_file_content") and st.button("Analiz Başlat", width='stretch'):
-            prompt = f"ÖDEV: {st.session_state.get('form_file_content')[:2000]}\nGÖREV: Analiz et ve 3 öneri ver."
-            box = st.empty()
-            full_text = ""
-            for chunk in ai_service.generate_stream(prompt, "Eğitim koçusun."):
-                full_text += chunk
-                box.markdown(full_text + "▌")
-            box.markdown(full_text)
-            try:
-                sync_widgets_to_form()
-                s = manager.load_student(st.session_state.form_data["id"])
-                if not s:
-                    grade_objs = [Grade(subject=k, score=v) for k, v in st.session_state.form_data["notes"].items()]
-                    behavior_objs = [BehaviorNote(note=b) for b in st.session_state.form_data.get("behavior", [])]
-                    s = Student(
-                        id=st.session_state.form_data["id"],
-                        name=st.session_state.form_data["name"] or "İsimsiz Öğrenci",
-                        class_name=st.session_state.form_data["class_name"],
-                        grades=grade_objs,
-                        file_content=st.session_state.form_data["file_content"],
-                        behavior_notes=behavior_objs
-                    )
-                s.ai_insights.append(AIInsight(analysis=full_text, model=ai_service.model))
-                manager.save_student(s)
-                globals()['GLOBAL_LAST_STUDENT'] = s
-                st.success("✅ Yapay zeka analizi kaydedildi.")
-                st.session_state.form_data = s.to_dict()
-                apply_form_to_widget_keys()
-            except Exception as e:
-                st.error(f"Kaydetme hatası: {e}")
-    else:
-        st.info("Ollama bağlantısı yoksa önce bağlantıyı kontrol edin veya `ollama serve` komutunu çalıştırın.")
-
-# TAB 4: KAYITLI ÖĞRENCİLER
-with tab4:
-    st.subheader("📚 Kayıtlı Öğrenciler ve Raporlar")
-    all_students = manager.get_all_students()
-    if not all_students:
-        st.info("Henüz kayıtlı öğrenci yok.")
-    else:
-        for s in all_students:
-            with st.expander(f"{s.name} ({s.class_name})"):
-                st.write(f"Sınıf: {s.class_name} — Kayıt: {s.last_updated}")
-                cols = st.columns([3, 1])
-                with cols[0]:
-                    if st.button("📥 Bu veriyi yükle ve düzenle", key=f"load_{s.id}", width='stretch'):
-                        st.session_state.form_data = s.to_dict()
-                        apply_form_to_widget_keys()
-                        st.experimental_rerun()
-                with cols[1]:
-                    if st.button("🗑️ Sil", key=f"del_{s.id}", width='content'):
-                        try:
-                            os.remove(os.path.join(Config.DATA_DIR, f"{s.id}.json"))
-                            st.success("Kayıt silindi. Sayfa yenileniyor...")
-                            time.sleep(0.8)
-                            st.experimental_rerun()
-                        except Exception as e:
-                            st.error(f"Silme hatası: {e}")
-
-                st.markdown("**Notlar (preview):**")
-                if s.grades:
-                    for g in s.grades:
-                        st.write(f"- {g.subject}: {g.score}")
-                else:
-                    st.write("Not yok.")
-                st.markdown("---")
-                cl = manager.get_changelog(s.id)
-                if cl:
-                    st.write(f"Değişiklik sayısı: {len(cl)}")
-                else:
-                    st.write("Değişiklik kaydı yok.")
-
-# ---------------------------------------------------------
-# 8. AUTO-SAVE LOGIC (debounced)
-# ---------------------------------------------------------
-# Ensure widget values are in form_data
-sync_widgets_to_form()
-current_hash = form_hash(st.session_state.form_data)
-now = time.time()
-
-if st.session_state.auto_save:
-    last_hash = st.session_state.get('last_saved_form_hash')
-    last_auto = st.session_state.get('last_auto_save_time', 0.0)
-    interval = float(st.session_state.get('auto_save_interval', 10))
-    # Only save if form changed and debounce interval elapsed
-    if current_hash != last_hash and (now - last_auto) >= interval:
-        ok = save_current_form()
-        st.session_state.last_auto_save_time = time.time()
-        if ok:
-            st.toast("Otomatik kaydetme başarılı.", icon="💾")
-        else:
-            st.warning("Otomatik kaydetme başarısız.")
-# Keep last_saved_form_hash in session (do not overwrite on every run)
-st.session_state.last_saved_form_hash = st.session_state.get('last_saved_form_hash') or current_hash
+# (remaining UI unchanged...)
