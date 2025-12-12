@@ -9,6 +9,4 @@ anthropic
 google-generativeai
 pyinstaller
 auto-py-to-exe
-threading
 uuid
-hashlib
