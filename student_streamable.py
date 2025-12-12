@@ -73,41 +73,61 @@ class Student:
 
     @classmethod
     def from_dict(cls, data: Dict):
-        # 1. Eski veri düzeltmesi (class -> class_name)
+        # 1. ESKİ VERİ ONARIMI (Migration)
+        # Eski dosyalarda 'class' anahtarı olabilir, bunu 'class_name' yapalım.
         if "class" in data and "class_name" not in data:
             data["class_name"] = data["class"]
 
-        # 2. Gereksiz veya çakışan anahtarları temizle
-        if "class" in data:
-            del data["class"]
-
+        # ID yoksa oluştur
         if "id" not in data:
             import uuid
             data["id"] = str(uuid.uuid4())
 
-        # 3. Manuel işlenecek karmaşık alanlar
-        # Bunları filtered_data'dan çıkaracağız ki çakışma olmasın
-        complex_fields = {"grades", "behavior_notes", "ai_insights"}
+        # 2. ALT NESNELERİ GÜVENLİ OLUŞTURMA
+        # Grade nesnesini oluştururken hata çıkarsa program çökmesin, o notu atlasın.
+        grades = []
+        for g in data.get("grades", []):
+            try:
+                # Sadece Grade sınıfının tanıdığı parametreleri gönder
+                valid_g = {k: v for k, v in g.items() if k in Grade.__annotations__}
+                grades.append(Grade(**valid_g))
+            except:
+                pass  # Bozuk not verisi varsa atla
 
-        grades = [Grade(**g) for g in data.get("grades", [])]
-        notes = [BehaviorNote(**n) for n in data.get("behavior_notes", [])]
-        insights = [AIInsight(**i) for i in data.get("ai_insights", [])]
+        notes = []
+        for n in data.get("behavior_notes", []):
+            try:
+                valid_n = {k: v for k, v in n.items() if k in BehaviorNote.__annotations__}
+                notes.append(BehaviorNote(**valid_n))
+            except:
+                pass
 
-        # 4. Basit alanları filtrele (name, id, class_name, file_content vb.)
-        # Karmaşık alanları (complex_fields) HARİÇ tutuyoruz.
-        valid_keys = {
-            k for k in data
-            if k in cls.__annotations__ and k not in complex_fields
-        }
-        filtered_data = {k: data[k] for k in valid_keys}
+        insights = []
+        for i in data.get("ai_insights", []):
+            try:
+                valid_i = {k: v for k, v in i.items() if k in AIInsight.__annotations__}
+                insights.append(AIInsight(**valid_i))
+            except:
+                pass
 
-        if "file_content" not in filtered_data:
-            filtered_data["file_content"] = ""
+        # 3. ANA NESNEYİ OLUŞTURMA
+        # Student sınıfının beklediği anahtarları ayıkla
+        # Karmaşık listeleri (grades vb.) hariç tutuyoruz, onları yukarıda elle yaptık.
+        exclude_fields = {"grades", "behavior_notes", "ai_insights"}
 
-        # 5. Nesneyi oluştur
-        # Artık 'grades' sadece aşağıda elle veriliyor, filtered_data içinde yok.
+        simple_data = {}
+        for k, v in data.items():
+            if k in cls.__annotations__ and k not in exclude_fields:
+                simple_data[k] = v
+
+        # Eksik kalan zorunlu alanlar varsa boş doldur (Hata vermemesi için)
+        if "name" not in simple_data: simple_data["name"] = "İsimsiz Öğrenci"
+        if "class_name" not in simple_data: simple_data["class_name"] = ""
+        if "file_content" not in simple_data: simple_data["file_content"] = ""
+
+        # Nihai nesneyi döndür
         return cls(
-            **filtered_data,
+            **simple_data,
             grades=grades,
             behavior_notes=notes,
             ai_insights=insights
@@ -130,11 +150,9 @@ class FileHandler:
                     text += para.text + "\n"
             elif file_type == 'txt':
                 text = uploaded_file.getvalue().decode("utf-8")
-            else:
-                return f"Format desteklenmiyor: {file_type}"
-            return text[:15000] + ("..." if len(text) > 15000 else "")
+            return text[:15000]
         except Exception as e:
-            return f"Dosya hatası: {str(e)}"
+            return f"Hata: {str(e)}"
 
 
 class StudentManager:
@@ -150,8 +168,9 @@ class StudentManager:
         try:
             with open(self._get_path(student.id), 'w', encoding='utf-8') as f:
                 json.dump(student.to_dict(), f, ensure_ascii=False, indent=2)
+            print(f"Kayıt OK: {student.name}")
         except Exception as e:
-            print(f"Kayıt hatası ({student.name}): {e}")
+            print(f"Kayıt Hatası: {e}")
 
     def load_student(self, student_id: str) -> Optional[Student]:
         path = self._get_path(student_id)
@@ -160,10 +179,10 @@ class StudentManager:
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+            # Hata olsa bile düzeltmeye çalışarak yükle
             return Student.from_dict(data)
         except Exception as e:
-            # Hata ayrıntısını görmek için print ekleyelim
-            print(f"Yükleme hatası ({student_id}): {e}")
+            print(f"⚠️ Dosya Bozuk ({student_id}): {e}")
             return None
 
     def get_all_students(self) -> List[Student]:
@@ -174,15 +193,19 @@ class StudentManager:
         for filename in os.listdir(Config.DATA_DIR):
             if filename.endswith('.json'):
                 student_id = filename.replace('.json', '')
-                student = self.load_student(student_id)
-                if student:
-                    students.append(student)
+                try:
+                    student = self.load_student(student_id)
+                    if student:
+                        students.append(student)
+                except:
+                    continue  # Çok kritik hata varsa o dosyayı atla
 
         students.sort(key=lambda x: x.name)
         return students
 
 
 class AIService:
+    # (Bu kısım aynı kalabilir, sadece yapıyı koruyun)
     def __init__(self):
         self.provider = "Ollama"
         self.model = Config.DEFAULT_MODEL
@@ -198,55 +221,41 @@ class AIService:
             try:
                 response = requests.get(f"{Config.OLLAMA_URL}/api/tags", timeout=3)
                 return response.status_code == 200
-            except requests.RequestException:
+            except:
                 return False
         return True
 
     def get_ollama_models(self) -> List[str]:
-        if self.provider != "Ollama":
-            return [self.model]
+        if self.provider != "Ollama": return [self.model]
         try:
-            response = requests.get(f"{Config.OLLAMA_URL}/api/tags", timeout=2)
-            if response.status_code == 200:
-                data = response.json()
-                models = [model['name'] for model in data.get('models', [])]
+            r = requests.get(f"{Config.OLLAMA_URL}/api/tags", timeout=2)
+            if r.status_code == 200:
+                models = [m['name'] for m in r.json().get('models', [])]
                 return models if models else [Config.DEFAULT_MODEL]
             return [Config.DEFAULT_MODEL]
-        except Exception:
+        except:
             return [Config.DEFAULT_MODEL]
 
-    def prepare_prompt(self, student: Student) -> str:
-        summary = [f"Öğrenci: {student.name} ({student.class_name})", ""]
-        return "\n".join(summary)  # (Basitleştirildi, app.py içinde detaylı yapılıyor zaten)
-
     def generate_stream(self, prompt: str, system_prompt: str) -> Generator[str, None, None]:
-        full_prompt = f"{system_prompt}\n\nVERİLER:\n{prompt}"
+        full = f"{system_prompt}\n\nVERİLER:\n{prompt}"
         try:
             if self.provider == "Ollama":
-                yield from self._stream_ollama(full_prompt)
+                yield from self._stream_ollama(full)
             else:
-                yield f"Hata: {self.provider} desteklenmiyor."
+                yield f"Hata: {self.provider} pasif."
         except Exception as e:
-            yield f"Hata: {str(e)}"
+            yield f"Hata: {e}"
 
     def _stream_ollama(self, prompt: str) -> Generator[str, None, None]:
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "stream": True,
-            "options": {"temperature": 0.7, "num_ctx": 4096}
-        }
+        payload = {"model": self.model, "prompt": prompt, "stream": True, "options": {"temperature": 0.7}}
         try:
             with requests.post(f"{Config.OLLAMA_URL}/api/generate", json=payload, stream=True,
-                               timeout=Config.TIMEOUT) as response:
-                if response.status_code == 200:
-                    for line in response.iter_lines():
+                               timeout=Config.TIMEOUT) as r:
+                if r.status_code == 200:
+                    for line in r.iter_lines():
                         if line:
-                            body = json.loads(line)
-                            yield body.get('response', '')
+                            yield json.loads(line).get('response', '')
                 else:
-                    yield f"API Hata: {response.status_code}"
+                    yield f"API Hata: {r.status_code}"
         except Exception as e:
             yield f"Bağlantı Hatası: {str(e)}"
-
-    # Diğer metodlar (OpenAI, Anthropic vb.) buraya eklenebilir...
