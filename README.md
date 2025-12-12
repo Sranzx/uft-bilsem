@@ -1,117 +1,120 @@
------
+# UFT-BİLSEM — Yapay Zeka Destekli Öğrenci Ürün Dosyası Analizi
 
-# 🎓 UFT-BİLSEM: Yerel Yapay Zeka Destekli Pedagojik Analiz Sistemi
+Bu doküman, proje hakkındaki teknik olmayan jüri üyelerine ve değerlendiricilere projenin ne yaptığı, neden önemli olduğu ve nasıl çalıştırılacağı hakkında açık, anlaşılır bir rehber sunar. Kod ve mimariyle ilgili temel noktalar da sade bir dille açıklanmıştır.
 
-## 📑 Proje Özeti
+---
 
-**UFT-BİLSEM**, eğitim süreçlerinde üretilen öğrenci verilerinin (akademik notlar, davranışsal gözlemler ve devamsızlık bilgileri), üçüncü parti bulut sunucularına iletilmeden, tamamen yerel ağ ve cihaz üzerinde çalışan Büyük Dil Modelleri (LLM) ile analiz edilmesini sağlayan bir yazılım projesidir.
+## Proje Özeti
+UFT-BİLSEM, öğretmenlerin veya rehberlik uzmanlarının öğrenci ürünlerini (ödevler, raporlar vb.) yerel olarak çalıştırılan bir yapay zeka motoru ile analiz edip pedagojik öneriler almasını sağlayan, verileri dışarıya göndermeyen (offline) bir uygulamadır.
 
-Bu proje, KVKK ve veri mahrekiyeti esaslarına tam uyum sağlayarak, eğitimcilere öğrencilerin gelişim süreçleri hakkında derinlemesine, yapay zeka destekli pedagojik raporlar sunmayı hedefler.
+---
 
------
+## Neden Bu Proje Önemli?
+- Gizlilik odaklı: Öğrenci verileri cihazı/yerel ağ dışına çıkmaz — KVKK ve veri mahremiyeti gereksinimlerine uygundur.
+- Kullanımı kolay: Arayüzü Streamlit ile hazırlanmış, öğretmenlerin teknik olmayan kişilerin kolayca kullanabileceği şekilde tasarlanmıştır.
+- Güvenilir veriler: Geliştirilmiş kayıt/yedekleme ve kurtarma mekanizmaları sayesinde verileriniz güvenlidir; bozulma veya yanlışlık durumlarında geri dönebilirsiniz.
+- Yerel yapay zeka (Ollama): İnternet bağlantısı olmadan yerel model çalıştırarak analiz yapar.
 
-## 🌟 Temel Özellikler ve Özgün Değer
+---
 
-  * **🔒 Tam Veri Mahrekiyeti (Offline Inference):** Analiz süreci için internet bağlantısına ihtiyaç duymaz. Öğrenci verileri asla cihaz dışına çıkmaz; tüm işlemler `Ollama` üzerinden yerel donanım gücüyle gerçekleştirilir.
-  * **🧠 İleri Seviye Pedagojik Analiz:** Llama 3.2, Mistral veya Gemma gibi açık kaynaklı modelleri kullanarak öğrenci profillerini yorumlar ve eğitimciye stratejik önerilerde bulunur.
-  * **⚡ Gerçek Zamanlı Akış (Streaming):** Analiz çıktıları, kullanıcı deneyimini artırmak amacıyla kelime kelime (token-based streaming) ekrana yansıtılır.
-  * **💾 JSON Tabanlı Veri Yapısı:** Karmaşık veritabanı kurulumlarına (SQL vb.) gerek duymadan, verileri taşınabilir ve hafif JSON formatında saklar.
-  * **🛡️ Hata Toleranslı Mimari:** Eksik veri girişi veya model yanıt sorunlarında sistemi stabilize eden hata yakalama mekanizmalarına sahiptir.
+## Öne Çıkan Özellikler
+- Yerel LLM tabanlı analiz (Ollama ile): Öğrenci dosyalarını analiz eder, öneriler üretir.
+- JSON tabanlı sade kayıt: Her öğrenci verisi dosya olarak veya merkezi bir `data` dosyasında saklanabilir.
+- Gelişmiş kalıcılık (persistence) modülü:
+  - Atomik kayıt (transactional save): Kaydederken dosyanın yarım kalmasını engeller.
+  - Otomatik yedekleme (backups) ve versiyonlama.
+  - Değişiklik kayıtları (changelog) ile kimin/ne zaman değiştirdiğinin izlenmesi.
+  - Veri doğrulama (hash/integrity) ve bozuk dosya kurtarma mekanizmaları.
+  - CSV/JSON/pickle şeklinde dışa aktarma (export).
+- Otomatik ve manuel kayıt seçenekleri + tarayıcı kapandığında otomatik yedekleme.
 
------
+---
 
-## 🚀 Kurulum ve Kullanım Yönergeleri
+## Kullanılan Bileşenler
+- app.py: Streamlit tabanlı kullanıcı arayüzü — form girişi, dosya yükleme, kayıt, analiz.
+- student_streamable.py: Öğrenci modelleri, dosya okuma (PDF/DOCX/TXT), temel öğrenci kaydetme/yükleme mantığı.
+- persistence.py: Yeni eklenen güçlü kalıcılık modülü — yedekleme, transactional kaydetme, kurtarma, değişiklik günlüğü, export fonksiyonları.
+- Ollama (yerel LLM): Analizleri yapan yerel model sunucusu (kullanıcı bilgisayarında çalıştırılmalı).
 
-Proje, hem son kullanıcılar (hazır uygulama) hem de geliştiriciler (kaynak kod) için iki farklı şekilde kullanılabilir.
+---
 
-### Yöntem A: Son Kullanıcılar İçin (Hazır `exe` Kullanımı)
+## Teknik Olmayan Açıklama — "Persistence" (Veri Saklama) Nedir ve Neden Geliştirildi?
+Persistence: Uygulamanın verileri (öğrenci bilgileri, notlar, dosya içeriği, model analizleri) diske kaydetme biçimidir.
 
-Kodlama bilgisi gerektirmeden uygulamayı doğrudan çalıştırmak için bu yöntemi izleyin.
+Neden geliştirdik?
+- Dosya bozulması veya beklenmedik kapanma durumlarında veri kaybı yaşanmasın.
+- Geçmiş kayıtlar (sürümler) saklansın, istenirse geri dönüş yapılsın.
+- Kimin ne zaman değişiklik yaptığını görebilelim (denetlenebilirlik).
+- Veriler doğrulansın — kaydedilen veri bozulmadığını teyit edebilelim.
 
-1.  **Ollama Kurulumu:** Uygulamanın beyni olan yapay zeka motorunu çalıştırmak için [Ollama Resmi Web Sitesi](https://ollama.com/)'nden işletim sisteminize uygun sürümü indirin ve kurun.
-2.  **Modelin İndirilmesi:** Terminal veya komut satırını açarak analiz için gerekli modeli indirin:
-    ```bash
-    ollama pull gemma3
-    ```
-3.  **Uygulamanın İndirilmesi:**
-      * Bu sayfanın sağ tarafında bulunan **[Releases](https://github.com/Sranzx/uft-bilsem/releases)** bölümüne gidin.
-      * En güncel sürüm (Latest) altındaki `.exe` uzantılı dosyayı bilgisayarınıza indirin.
-4.  **Çalıştırma:** İndirdiğiniz dosyaya çift tıklayarak sistemi başlatın.
+Bu amaçla persistence.py içinde:
+- Atomic (geçişli) yazma: önce geçici dosyaya yazılır, sonra yerine konur — böylece asla yarım kalmış dosya olmaz.
+- BackupManager: Her önemli işlemin öncesinde veya araçla istenildiğinde yedek oluşturur; yedeklerin meta verileri saklanır.
+- ChangeLog: Kaydetme, güncelleme, geri alma gibi işlemleri zaman damgası ile kaydeder.
+- RecoveryManager: Bozulma durumunda en son sağlıklı yedekten geri döner.
+- ExportManager: Verileri CSV/JSON olarak dışarı verir, raporlama ve inceleme kolaylaşır.
 
-> **Not:** Windows kullanıyorsanız ve "SmartScreen" uyarısı alırsanız, "Ek bilgi" -\> "Yine de çalıştır" seçeneklerini takip edebilirsiniz.
+---
 
------
+## İlk Kurulum ve Çalıştırma (Adım Adım)
 
-### Yöntem B: Geliştiriciler İçin (Kaynak Koddan Derleme)
+1. Gereksinimler:
+   - Python 3.8 veya üzeri
+   - Git
+   - Ollama (yerel LLM servisi) — proje offline inference hedeflediği için Ollama bilgisayarınızda çalışmalıdır.
+   - Gerekli Python kütüphaneleri: requirements.txt ile yüklenir.
 
-Projeyi geliştirmek veya kaynak koddan çalıştırmak isteyenler için adımlar aşağıdadır.
+2. Repoyu klonlayın:
+   ```bash
+   git clone https://github.com/Sranzx/uft-bilsem.git
+   cd uft-bilsem
+   ```
 
-#### 1\. Gereksinimler
+3. Sanal ortam oluşturun ve bağımlılıkları yükleyin:
+   ```bash
+   python -m venv venv
+   # Windows
+   .\venv\Scripts\Activate.ps1
+   # macOS/Linux
+   source venv/bin/activate
 
-  * Python 3.8 veya üzeri
-  * Git
-  * Ollama (Yüklü ve çalışır durumda olmalı)
+   pip install -r requirements.txt
+   ```
 
-#### 2\. Repoyu Klonlama
+4. Ollama'yı başlatın (kurulduysa):
+   ```bash
+   ollama serve
+   ```
+   Not: Model indirme örneği:
+   ```bash
+   ollama pull gemma3
+   ```
 
-Terminalinizi açın ve projeyi yerel diskinize kopyalayın:
+5. Uygulamayı başlatın:
+   - Geliştirici modu (Streamlit):
+     ```bash
+     streamlit run app.py
+     ```
+   - Veya hazırladığınız .exe varsa doğrudan çalıştırın.
 
-```bash
-git clone https://github.com/Sranzx/uft-bilsem.git
-cd uft-bilsem
-```
+---
 
-#### 3\. Sanal Ortam (Virtual Environment) Kurulumu
+## Geliştirici Notları (Kısa Teknik Özet)
+- Eski davranış: Her öğrenci için ayrı .json dosyası (student_data/). Bu yaklaşım taşınabilir ancak büyük projelerde yönetim zorlukları olabilir.
+- Yeni eklenen persistence.py:
+  - Merkezi bir `data/data.json` (veya tercih ettiğiniz format) ile tüm kayıtlar kontrol edilebilir.
+  - TransactionalStorage ile "yarım yazılma" riskine karşı geçici dosya + atomik replace stratejisi kullanılır.
+  - BackupManager, ChangeLog ve RecoveryManager bileşenleri veri bütünlüğünü ve geçmişi garanti eder.
+- student_streamable.py içindeki Student/Grade/AIInsight yapısı, persistence.py ile uyumlu biçimde kullanılmalı. (repository içinde örnek entegrasyon hazırlandı.)
 
-Bağımlılıkların sistem geneline yayılmasını önlemek için izole bir ortam oluşturun:
+---
 
-```bash
-# Sanal ortamı oluştur
-python -m venv venv
+## Sık Karşılaşılan Sorunlar ve Çözümleri
+- Ollama çalışmıyor / model yüklenmemiş:
+  - Hata: Arayüzde "Ollama kapalı" uyarısı görürsünüz. Terminalde `ollama serve` çalıştırın ve modelin indiğinden emin olun.
+- Kaydetme başarısız/permission hatası:
+  - `data/` klasörü yazılabilir mi kontrol edin. Gerekirse uygulamayı yönetici/uygulama sahibi izinleriyle çalıştırın.
+- Bozuk JSON dosyası:
+  - `data/backups/` içinden son sağlıklı yedeği kullanarak geri yükleme yapılabilir (RecoveryManager).
 
-# Sanal ortamı aktif et
-# Windows için:
-.\venv\Scripts\Activate.ps1
-
-# macOS/Linux için:
-source venv/bin/activate
-
-# Fish Shell için:
-source venv/bin/activate.fish
-```
-
-#### 4\. Kütüphanelerin Yüklenmesi
-
-Gerekli Python paketlerini yükleyin:
-
-```bash
-pip install -r requirements.txt
-```
-
-#### 5\. Uygulamayı Başlatma
-
-Kurulum tamamlandıktan sonra tercih ettiğiniz arayüzü başlatın.
-
-**Terminal Arayüzü (CLI) ile Başlat:**
-
-```bash
-python app.py
-```
-
-**Web Arayüzü (Streamlit) ile Başlat:**
-
-```bash
-streamlit run app.py
-```
-
------
-
-## 🛠️ Sorun Giderme (Troubleshooting)
-
-| Hata Mesajı | Olası Neden | Çözüm |
-| :--- | :--- | :--- |
-| `Connection refused` | Ollama kapalı olabilir. | Ollama uygulamasının arka planda çalıştığından emin olun. |
-| `Module not found` | Eksik kütüphane. | `pip install` komutunu sanal ortam (venv) aktifken tekrar çalıştırın. |
-| `Encoding Error` | Türkçe karakter sorunu. | Windows terminalinde `chcp 65001` komutunu uygulayın. |
-
------
+---
