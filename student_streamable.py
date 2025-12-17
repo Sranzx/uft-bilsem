@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import json
 import os
 import requests
@@ -8,13 +7,10 @@ from datetime import datetime
 from typing import List, Optional, Generator, Dict, Any
 from dataclasses import dataclass, field, asdict
 
-# Basit diff hesaplama için
-from collections import defaultdict
-
-# --- Kütüphane Yüklemeleri (opsiyonel) ---
-openai = None
-anthropic = None
-genai = None
+# --- Kütüphane Yüklemeleri ---
+openai: Any = None
+anthropic: Any = None
+genai: Any = None
 
 try:
     import openai
@@ -37,7 +33,6 @@ class Config:
     OLLAMA_URL = "http://localhost:11434"
     DEFAULT_MODEL = "llama3.2"
     TIMEOUT = 60
-    CHANGELOG_FILE = "changelog.json"  # kayıtlı değişiklikler için merkezi dosya
 
 
 @dataclass
@@ -50,7 +45,7 @@ class Grade:
 @dataclass
 class BehaviorNote:
     note: str
-    type: str = "genel"
+    type: str
     date: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M"))
 
 
@@ -78,7 +73,18 @@ class Student:
 
     @classmethod
     def from_dict(cls, data: Dict):
-        # Backwards compatibility / migration
+        # JSON verisi bir sözlük değilse (örn: liste ise) hata ver
+        if not isinstance(data, dict):
+            raise ValueError("Veri formatı geçersiz (Dict bekleniyor)")
+
+        # 1. KONTROL: Bu gerçekten bir öğrenci dosyası mı?
+        # En azından isim, sınıf veya notlar alanından biri olmalı.
+        # Aksi takdirde bu bir config veya changelog dosyasıdır.
+        is_student = any(k in data for k in ["name", "class_name", "grades", "behavior_notes", "class"])
+        if not is_student:
+            raise ValueError("Bu bir öğrenci dosyası değil.")
+
+        # 2. ESKİ VERİ ONARIMI
         if "class" in data and "class_name" not in data:
             data["class_name"] = data["class"]
 
@@ -86,6 +92,7 @@ class Student:
             import uuid
             data["id"] = str(uuid.uuid4())
 
+        # 3. ALT NESNELERİ GÜVENLİ OLUŞTURMA
         grades = []
         for g in data.get("grades", []):
             try:
@@ -110,6 +117,7 @@ class Student:
             except:
                 pass
 
+        # 4. ANA NESNEYİ OLUŞTURMA
         exclude_fields = {"grades", "behavior_notes", "ai_insights"}
 
         simple_data = {}
@@ -117,6 +125,7 @@ class Student:
             if k in cls.__annotations__ and k not in exclude_fields:
                 simple_data[k] = v
 
+        # Eksik alanları varsayılanla doldur (Ama artık kontrolümüz var, boş dosya gelmez)
         if "name" not in simple_data: simple_data["name"] = "İsimsiz Öğrenci"
         if "class_name" not in simple_data: simple_data["class_name"] = ""
         if "file_content" not in simple_data: simple_data["file_content"] = ""
@@ -138,150 +147,32 @@ class FileHandler:
             if file_type == 'pdf':
                 reader = PyPDF2.PdfReader(uploaded_file)
                 for page in reader.pages:
-                    text += (page.extract_text() or "") + "\n"
+                    text += page.extract_text() + "\n"
             elif file_type in ['docx', 'doc']:
                 doc = Document(uploaded_file)
                 for para in doc.paragraphs:
                     text += para.text + "\n"
             elif file_type == 'txt':
                 text = uploaded_file.getvalue().decode("utf-8")
-            return text[:15000] + ("..." if len(text) > 15000 else "")
+            return text[:15000]
         except Exception as e:
-            return f"Dosya hatası: {str(e)}"
+            return f"Hata: {str(e)}"
 
 
 class StudentManager:
-    """
-    Geliştirilmiş StudentManager:
-    - Tekil öğrenci dosyaları (student_data/<id>.json)
-    - Merkezî changelog: student_data/changelog.json
-    - save_student: önce mevcut versiyon ile fark hesaplar, changelog'a yazar, sonra kaydeder.
-    """
-
     def __init__(self):
         if not os.path.exists(Config.DATA_DIR):
             os.makedirs(Config.DATA_DIR)
-        self.changelog_path = os.path.join(Config.DATA_DIR, Config.CHANGELOG_FILE)
-        # yükle changelog veya init et
-        self._changelog = self._load_changelog()
 
     def _get_path(self, student_id: str) -> str:
         return os.path.join(Config.DATA_DIR, f"{student_id}.json")
 
-    def _load_changelog(self) -> Dict[str, List[Dict[str, Any]]]:
-        if not os.path.exists(self.changelog_path):
-            return {}
-        try:
-            with open(self.changelog_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
-
-    def _save_changelog(self) -> None:
-        try:
-            with open(self.changelog_path, 'w', encoding='utf-8') as f:
-                json.dump(self._changelog, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
-
-    def _dict_for_diff(self, student: Student) -> Dict[str, Any]:
-        """
-        Student nesnesinin basit dict temsili.
-        Sadece diff göstermek için gerekli alanlar alınır.
-        """
-        return {
-            "id": student.id,
-            "name": student.name,
-            "class_name": student.class_name,
-            "grades": [{ "subject": g.subject, "score": g.score, "date": g.date } for g in student.grades],
-            "behavior_notes": [{ "note": b.note, "type": b.type, "date": b.date } for b in student.behavior_notes],
-            "ai_insights_count": len(student.ai_insights),
-            "file_content_snippet": (student.file_content or "")[:200]  # büyük içeriği gösterme
-        }
-
-    def _compute_diff(self, old: Dict[str, Any], new: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """
-        Çok basit fark hesaplayıcı: alan bazında değişen değerleri döndürür.
-        Notlar (grades) için subject'e göre karşılaştırma yapar.
-        """
-        diffs = []
-
-        # Basit alanlar
-        for key in ["name", "class_name", "file_content_snippet"]:
-            old_v = old.get(key)
-            new_v = new.get(key)
-            if old_v != new_v:
-                diffs.append({"field": key, "old": old_v, "new": new_v})
-
-        # Grades - subject'e göre eşleştir
-        old_grades = {g['subject']: g for g in old.get("grades", [])}
-        new_grades = {g['subject']: g for g in new.get("grades", [])}
-
-        # Ekleme / Güncelleme
-        for subj, ng in new_grades.items():
-            og = old_grades.get(subj)
-            if not og:
-                diffs.append({"field": "grades", "type": "added", "subject": subj, "new": ng})
-            else:
-                if og.get("score") != ng.get("score"):
-                    diffs.append({"field": "grades", "type": "updated", "subject": subj, "old": og, "new": ng})
-
-        # Silme
-        for subj, og in old_grades.items():
-            if subj not in new_grades:
-                diffs.append({"field": "grades", "type": "removed", "subject": subj, "old": og})
-
-        # Behavior notes - basit karşılaştırma (metin bazlı)
-        old_beh = [b.get("note") for b in old.get("behavior_notes", [])]
-        new_beh = [b.get("note") for b in new.get("behavior_notes", [])]
-        # eklenenler
-        for n in new_beh:
-            if n not in old_beh:
-                diffs.append({"field": "behavior_notes", "type": "added", "note": n})
-        # silinenler
-        for o in old_beh:
-            if o not in new_beh:
-                diffs.append({"field": "behavior_notes", "type": "removed", "note": o})
-
-        # AI insights sayısı değiştiyse bilgi ekle
-        if old.get("ai_insights_count") != new.get("ai_insights_count"):
-            diffs.append({
-                "field": "ai_insights_count",
-                "old": old.get("ai_insights_count"),
-                "new": new.get("ai_insights_count")
-            })
-
-        return diffs
-
     def save_student(self, student: Student) -> None:
         student.last_updated = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        path = self._get_path(student.id)
-
-        # Yüklü bir önceki versiyon var mı?
-        prev_student = self.load_student(student.id)
-        prev_snapshot = prev_student.to_dict() if prev_student else None
-
-        # Diff hesapla
-        prev_for_diff = self._dict_for_diff(prev_student) if prev_student else {}
-        new_for_diff = self._dict_for_diff(student)
-        diffs = self._compute_diff(prev_for_diff, new_for_diff)
-
         try:
-            # Dosyaya yaz
-            with open(path, 'w', encoding='utf-8') as f:
+            with open(self._get_path(student.id), 'w', encoding='utf-8') as f:
                 json.dump(student.to_dict(), f, ensure_ascii=False, indent=2)
-            # Changelog'a ekle (sadece değişiklik varsa)
-            if diffs:
-                entry = {
-                    "timestamp": datetime.now().isoformat(),
-                    "student_id": student.id,
-                    "diffs": diffs,
-                    "prev_snapshot": prev_snapshot,
-                    "new_snapshot": student.to_dict()
-                }
-                self._changelog.setdefault(student.id, []).append(entry)
-                self._save_changelog()
+            print(f"Kayıt OK: {student.name}")
         except Exception as e:
             print(f"Kayıt Hatası: {e}")
 
@@ -294,7 +185,8 @@ class StudentManager:
                 data = json.load(f)
             return Student.from_dict(data)
         except Exception as e:
-            print(f"⚠️ Dosya Bozuk ({student_id}): {e}")
+            # Hata varsa (örn: Changelog dosyasıysa) sessizce None dön
+            # print(f"⚠️ Dosya Yüklenemedi ({student_id}): {e}")
             return None
 
     def get_all_students(self) -> List[Student]:
@@ -302,8 +194,14 @@ class StudentManager:
         if not os.path.exists(Config.DATA_DIR):
             return []
 
+        # YASAKLI DOSYALAR LİSTESİ
+        ignored_files = {"changelog.json", "settings.json", "config.json", ".ds_store"}
+
         for filename in os.listdir(Config.DATA_DIR):
-            if filename.endswith('.json') and filename != Config.CHANGELOG_FILE:
+            if filename.lower() in ignored_files:
+                continue
+
+            if filename.endswith('.json'):
                 student_id = filename.replace('.json', '')
                 try:
                     student = self.load_student(student_id)
@@ -314,43 +212,6 @@ class StudentManager:
 
         students.sort(key=lambda x: x.name)
         return students
-
-    # Changelog API
-    def get_changelog(self, student_id: str) -> List[Dict[str, Any]]:
-        return self._changelog.get(student_id, [])
-
-    def restore_from_changelog(self, student_id: str, entry_index: int) -> bool:
-        """
-        Seçili changelog entry'sindeki prev_snapshot ile geri yükleme yapar.
-        entry_index: changelog listesinde hangi entry (0 en eski).
-        """
-        entries = self.get_changelog(student_id)
-        if not entries or entry_index < 0 or entry_index >= len(entries):
-            return False
-        entry = entries[entry_index]
-        prev = entry.get("prev_snapshot")
-        if not prev:
-            return False
-        try:
-            # Önce mevcut dosyayı yedek olarak changelog'a yeni bir entry ile sakla
-            current = self.load_student(student_id)
-            backup_entry = {
-                "timestamp": datetime.now().isoformat(),
-                "student_id": student_id,
-                "diffs": [{"field": "restore", "description": f"Restore to entry {entry_index}"}],
-                "prev_snapshot": current.to_dict() if current else None,
-                "new_snapshot": prev
-            }
-            self._changelog.setdefault(student_id, []).append(backup_entry)
-            self._save_changelog()
-
-            # Restore et
-            with open(self._get_path(student_id), 'w', encoding='utf-8') as f:
-                json.dump(prev, f, ensure_ascii=False, indent=2)
-            return True
-        except Exception as e:
-            print(f"Geri yükleme hatası: {e}")
-            return False
 
 
 class AIService:
@@ -395,19 +256,21 @@ class AIService:
             yield f"Hata: {e}"
 
     def _stream_ollama(self, prompt: str) -> Generator[str, None, None]:
-        # Basit fallback streaming (kullanıcı ortamına göre özelleştirilebilir)
+        payload = {"model": self.model, "prompt": prompt, "stream": True, "options": {"temperature": 0.7}}
         try:
-            r = requests.post(f"{Config.OLLAMA_URL}/api/generate", json={
-                "model": self.model,
-                "prompt": prompt,
-                "stream": True
-            }, timeout=Config.TIMEOUT, stream=True)
-            # Basit stream okuma
-            for chunk in r.iter_content(chunk_size=64):
-                try:
-                    text = chunk.decode('utf-8')
-                    yield text
-                except:
-                    continue
+            with requests.post(f"{Config.OLLAMA_URL}/api/generate", json=payload, stream=True,
+                               timeout=Config.TIMEOUT) as r:
+                if r.status_code == 200:
+                    for line in r.iter_lines():
+                        if line:
+                            try:
+                                body = json.loads(line)
+                                response_text = body.get('response', '')
+                                if response_text:
+                                    yield response_text
+                            except json.JSONDecodeError:
+                                pass
+                else:
+                    yield f"API Hata: {r.status_code}"
         except Exception as e:
-            yield f"Hata: {e}"
+            yield f"Bağlantı Hatası: {str(e)}"
