@@ -31,7 +31,7 @@ except ImportError:
 class Config:
     DATA_DIR = "student_data"
     OLLAMA_URL = "http://localhost:11434"
-    DEFAULT_MODEL = "llama3.2"
+    DEFAULT_MODEL = "gemma3"
     TIMEOUT = 60
 
 

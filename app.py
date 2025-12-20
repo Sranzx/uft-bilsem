@@ -8,9 +8,10 @@ import os
 import uuid
 from datetime import datetime
 from streamlit.runtime import get_instance
+from dataclasses import asdict  # Veri dönüşümü için gerekli
 
 # Kendi modüllerimiz
-from student_streamable import AIService, Config, FileHandler, StudentManager, Student, Grade
+from student_streamable import AIService, Config, FileHandler, StudentManager, Student, Grade, AIInsight
 
 # ---------------------------------------------------------
 # GLOBAL DEĞİŞKENLER
@@ -35,6 +36,7 @@ st.markdown("""
     .stButton>button { width: 100%; border-radius: 5px; height: 3em; font-weight: bold;}
     h1, h2, h3 { color: #4facfe; }
     .metric-card { background-color: #262730; padding: 15px; border-radius: 10px; border-left: 5px solid #4facfe; }
+    .insight-box { border-left: 3px solid #00ff00; padding-left: 10px; margin-bottom: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -89,24 +91,27 @@ if 'form_data' not in st.session_state:
         "notes": {},
         "behavior": [],
         "observation": "",
-        "file_content": ""
+        "file_content": "",
+        "ai_insights": []  # Yapay zeka geçmişi için yeni alan
     }
 
 if 'course_list' not in st.session_state:
     st.session_state.course_list = ["Matematik", "Türkçe", "Fen Bilimleri", "Sosyal Bilgiler"]
 
-# --- HATA DÜZELTME KISMI: GECİKMELİ GÜNCELLEME ---
-# Eğer bir önceki işlemden gelen "Seçimi Güncelle" emri varsa,
-# widget çizilmeden ÖNCE burada uyguluyoruz.
+# Gecikmeli güncelleme kontrolü
 if "pending_student_selector" in st.session_state:
     st.session_state["student_selector"] = st.session_state.pop("pending_student_selector")
+
+# AI Sonucu Geçici Hafıza (Sayfa yenilenince kaybolmasın diye)
+if "last_ai_response" not in st.session_state:
+    st.session_state.last_ai_response = ""
 
 
 # ---------------------------------------------------------
 # 3. YARDIMCI FONKSİYONLAR
 # ---------------------------------------------------------
 def reset_form():
-    """Formu temizler ve widget state'lerini sıfırlar."""
+    """Formu temizler."""
     st.session_state.form_data = {
         "id": str(uuid.uuid4()),
         "name": "",
@@ -114,23 +119,28 @@ def reset_form():
         "notes": {},
         "behavior": [],
         "observation": "",
-        "file_content": ""
+        "file_content": "",
+        "ai_insights": []
     }
 
-    # Widget keylerini sıfırla
     for course in st.session_state.course_list:
         if f"grade_{course}" in st.session_state:
             st.session_state[f"grade_{course}"] = 0
         if f"check_{course}" in st.session_state:
             st.session_state[f"check_{course}"] = False
 
-    # Seçimi temizle
     st.session_state["student_selector"] = None
+    st.session_state.last_ai_response = ""
 
 
 def load_student_to_form(student_obj):
     """Veritabanından gelen öğrenciyi forma yükler."""
     notes_dict = {g.subject: g.score for g in student_obj.grades}
+
+    # AI Analizlerini Dict formatına çevir
+    insights_list = []
+    if student_obj.ai_insights:
+        insights_list = [{"analysis": i.analysis, "model": i.model, "date": i.date} for i in student_obj.ai_insights]
 
     st.session_state.form_data = {
         "id": student_obj.id,
@@ -139,7 +149,8 @@ def load_student_to_form(student_obj):
         "notes": notes_dict,
         "behavior": [],
         "observation": "",
-        "file_content": student_obj.file_content
+        "file_content": student_obj.file_content,
+        "ai_insights": insights_list
     }
 
     if notes_dict:
@@ -147,7 +158,6 @@ def load_student_to_form(student_obj):
             if subject not in st.session_state.course_list:
                 st.session_state.course_list.append(subject)
 
-    # Widget'ları güncelle
     for course in st.session_state.course_list:
         if course in notes_dict:
             st.session_state[f"grade_{course}"] = notes_dict[course]
@@ -156,36 +166,36 @@ def load_student_to_form(student_obj):
             st.session_state[f"grade_{course}"] = 0
             st.session_state[f"check_{course}"] = False
 
+    st.session_state.last_ai_response = ""  # Yeni öğrenciye geçince eski AI çıktısını temizle
+
 
 def save_current_form(update_ui=False):
-    """
-    Formdaki veriyi kaydeder.
-    update_ui=True ise sol menüdeki seçimi de günceller (Butona basınca).
-    update_ui=False ise sadece arkada kaydeder (Yazı yazarken).
-    """
+    """Formdaki veriyi kaydeder."""
     data = st.session_state.form_data
     if not data["name"]:
-        # Otomatik kayıtta hata mesajı gösterme, sadece butonla basınca gösterilir
-        if update_ui:
-            st.error("❌ Öğrenci adı girmediniz!")
+        if update_ui: st.error("❌ Öğrenci adı girmediniz!")
         return False
 
     grade_objs = [Grade(subject=k, score=v) for k, v in data["notes"].items()]
+
+    # AI Analizlerini Geri Object Formatına Çevir
+    ai_objs = []
+    for i in data["ai_insights"]:
+        ai_objs.append(AIInsight(analysis=i["analysis"], model=i["model"], date=i["date"]))
 
     student = Student(
         id=data["id"],
         name=data["name"],
         class_name=data["class_name"],
         grades=grade_objs,
-        file_content=data["file_content"]
+        file_content=data["file_content"],
+        ai_insights=ai_objs
     )
 
     manager.save_student(student)
     globals()['GLOBAL_LAST_STUDENT'] = student
 
     if update_ui:
-        # HATA ÇÖZÜMÜ: Seçimi hemen güncellemek yerine,
-        # bir sonraki turda güncellenmesi için not bırakıyoruz.
         display_name = f"{student.name} ({student.class_name})"
         st.session_state["pending_student_selector"] = display_name
 
@@ -193,12 +203,11 @@ def save_current_form(update_ui=False):
 
 
 # ---------------------------------------------------------
-# 4. SIDEBAR (YAN MENÜ)
+# 4. SIDEBAR
 # ---------------------------------------------------------
 with st.sidebar:
     st.header("📂 Öğrenci İşlemleri")
 
-    # YENİ ÖĞRENCİ BUTONU
     if st.button("➕ YENİ ÖĞRENCİ OLUŞTUR", type="primary", use_container_width=True):
         reset_form()
         st.rerun()
@@ -229,21 +238,19 @@ with st.sidebar:
     st.markdown("---")
     if st.button("🚪 KAYDET VE ÇIK", use_container_width=True):
         if st.session_state.form_data["name"]:
-            # Burada UI güncellemeye gerek yok, çıkıyoruz zaten
             save_current_form(update_ui=False)
         st.success("Kapatılıyor...")
         time.sleep(1)
         os._exit(0)
 
 # ---------------------------------------------------------
-# 5. ANA EKRAN (FORM)
+# 5. ANA EKRAN
 # ---------------------------------------------------------
 st.title("🎓 Öğrenci Performans Sistemi")
 
 col_save, col_info = st.columns([1, 3])
 with col_save:
     if st.button("💾 VERİLERİ KAYDET", type="primary", use_container_width=True):
-        # Butonla basınca UI güncellemesi istiyoruz (True)
         if save_current_form(update_ui=True):
             st.toast(f"✅ {st.session_state.form_data['name']} kaydedildi!", icon="🎉")
             time.sleep(0.5)
@@ -268,7 +275,6 @@ with tab1:
                                                                  value=st.session_state.form_data["class_name"])
 
     st.subheader("📚 Ders Notları")
-    st.caption("Not girmek istediğiniz dersin kutucuğunu işaretleyin.")
 
     with st.expander("Ders Listesini Düzenle"):
         c_add, c_del = st.columns(2)
@@ -287,7 +293,6 @@ with tab1:
                 st.session_state.form_data["notes"].pop(del_c, None)
                 st.rerun()
 
-    # --- NOT GİRİŞ SİSTEMİ ---
     cols = st.columns(3)
     for i, course in enumerate(st.session_state.course_list):
         with cols[i % 3]:
@@ -332,13 +337,22 @@ with tab3:
     st.subheader("🤖 Ollama Analizi")
     ai_service = AIService()
 
+    # 1. GEÇMİŞ ANALİZLERİ GÖSTER
+    if st.session_state.form_data["ai_insights"]:
+        with st.expander(f"📚 Geçmiş Raporlar ({len(st.session_state.form_data['ai_insights'])})"):
+            for idx, insight in enumerate(reversed(st.session_state.form_data["ai_insights"])):
+                st.caption(f"📅 {insight['date']} | 🤖 {insight['model']}")
+                st.info(insight['analysis'])
+                st.divider()
+
+    # 2. YENİ ANALİZ OLUŞTUR
     if ai_service.check_connection():
-        st.success("🟢 Bağlı")
+        st.success("🟢 Bağlantı Hazır")
         models = ai_service.get_ollama_models()
         model = st.selectbox("Model", models or ["llama3.2"])
         ai_service.configure("Ollama", model)
 
-        if st.button("Analizi Başlat", type="primary"):
+        if st.button("✨ Analizi Başlat", type="primary"):
             if not st.session_state.form_data["name"]:
                 st.error("İsim giriniz.")
             else:
@@ -348,7 +362,7 @@ with tab3:
                 NOTLAR: {json.dumps(data['notes'], ensure_ascii=False)}
                 DAVRANIŞLAR: {', '.join(data['behavior'])}
                 ÖDEV: {data['file_content'][:2000]}
-                GÖREV: Analiz et ve 3 öneri ver.
+                GÖREV: Detaylı analiz et, güçlü yönleri ve gelişim alanlarını belirle.
                 """
                 box = st.empty()
                 full_text = ""
@@ -356,10 +370,32 @@ with tab3:
                     full_text += chunk
                     box.markdown(full_text + "▌")
                 box.markdown(full_text)
+
+                # Sonucu geçici hafızaya al (Kaydetmek isterse diye)
+                st.session_state.last_ai_response = full_text
+
+        # 3. ANALİZİ KAYDETME BUTONU
+        if st.session_state.last_ai_response:
+            st.divider()
+            st.caption("Son üretilen analiz henüz kaydedilmedi.")
+            if st.button("💾 Bu Analizi Kaydet"):
+                new_insight = {
+                    "analysis": st.session_state.last_ai_response,
+                    "model": model,
+                    "date": datetime.now().strftime("%Y-%m-%d %H:%M")
+                }
+                # Listeye ekle
+                st.session_state.form_data["ai_insights"].append(new_insight)
+                # Anında diske yaz
+                save_current_form(update_ui=False)
+                st.success("Rapor başarıyla kaydedildi!")
+                st.session_state.last_ai_response = ""  # Temizle
+                time.sleep(1)
+                st.rerun()  # Listeyi güncellemek için yenile
+
     else:
         st.error("🔴 Ollama kapalı. Terminalde 'ollama serve' yazın.")
 
-# Anlık Veri Yedekleme (Arka planda sessiz çalışır)
-# update_ui=False olduğu için sol menüyü güncellemeye çalışmaz ve hata vermez.
+# Anlık Veri Yedekleme
 if st.session_state.form_data["name"]:
     save_current_form(update_ui=False)
