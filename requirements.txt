@@ -4,9 +4,9 @@ requests
 rich
 PyPDF2
 python-docx
-openai
-anthropic
-google-generativeai
+#openai
+#anthropic
+#google-generativeai
 pyinstaller
 auto-py-to-exe
 uuid
