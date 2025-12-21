@@ -1,12 +1,5 @@
-streamlit
-pandas
-requests
-rich
-PyPDF2
-python-docx
-#openai
-#anthropic
-#google-generativeai
-pyinstaller
-auto-py-to-exe
-uuid
+streamlit>=1.29.0
+requests>=2.31.0
+pandas>=1.5.3
+PyPDF2>=3.0.1
+python-docx>=0.8.11
