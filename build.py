@@ -1,78 +1,112 @@
 import os
+import sys
 import streamlit
 import PyInstaller.__main__
+from pathlib import Path
 
-# 1. Streamlit'in dosya yollarını bul
-streamlit_dir = os.path.dirname(streamlit.__file__)
-static_path = os.path.join(streamlit_dir, "static")
 
-# İkon dosyası (Varsa)
-icon_file = "uft.ico"
+def build_executable():
+    # 1. Streamlit'in dosya yollarını bul
+    streamlit_dir = os.path.dirname(streamlit.__file__)
+    static_path = os.path.join(streamlit_dir, "static")
 
-print(f"📍 Streamlit dizini: {streamlit_dir}")
+    # Proje dizini
+    project_dir = Path.cwd()
 
-# İşletim sistemi ayracı (Windows için ; Mac/Linux için :)
-sep = os.pathsep
+    # İkon dosyası (Varsa)
+    icon_file = project_dir / "uft.ico"
 
-# Komut listesini hazırlıyoruz
-commands = [
-    'run_app.py',  # Başlatıcı dosya
-    '--onefile',  # Tek dosya
-    '--name=UFT-BILSEM',  # Exe'nin adı
-    '--clean',  # Önbelleği temizle
-    '--noconsole',  # Konsol penceresini gizle
+    print(f"📍 Streamlit dizini: {streamlit_dir}")
+    print(f"📍 Proje dizini: {project_dir}")
 
-    # --- 1. EKSİK DOSYALAR (DATA) ---
-    # Hem app.py hem de student_streamable.py dosyasını exe içine gömüyoruz
-    f'--add-data=app.py{sep}.',
-    f'--add-data=student_streamable.py{sep}.',
+    # İşletim sistemi ayracı (Windows için ; Mac/Linux için :)
+    sep = os.pathsep
 
-    # --- 2. ARAYÜZ DOSYALARI ---
-    # Streamlit static dosyalarını ekliyoruz (index.html hatasını çözer)
-    f'--add-data={static_path}{sep}streamlit/static',
+    # Komut listesini hazırlıyoruz
+    commands = [
+        'run_app.py',  # Başlatıcı dosya
+        '--onefile',  # Tek dosya
+        '--name=UFT-BILSEM',  # Exe'nin adı
+        '--clean',  # Önbelleği temizle
+        '--noconfirm',  # Otomatik onay
+        '--noconsole',  # Konsol penceresini gizle (production için)
+        # '--console',  # Debug için konsolu açmak isterseniz bunu kullanın
 
-    # --- 3. GİZLİ MODÜLLER (HIDDEN IMPORTS) ---
-    # PyInstaller'ın göremediği Streamlit ve diğer modüller
-    '--hidden-import=streamlit.runtime.scriptrunner.magic_funcs',
-    '--hidden-import=streamlit.runtime.scriptrunner.script_runner',
-    '--hidden-import=streamlit.web.cli',
-    '--hidden-import=streamlit.runtime.media_file_manager',
-    '--hidden-import=streamlit.runtime.memory_media_file_manager',
+        # --- 1. GEREKLİ DOSYALAR ---
+        # Ana uygulama dosyalarını ekle
+        f'--add-data={project_dir}/app.py{sep}.',
+        f'--add-data={project_dir}/student_streamable.py{sep}.',
 
-    # Sizin projenizin bağımlılıkları
-    '--hidden-import=openai',
-    '--hidden-import=anthropic',
-    '--hidden-import=google.generativeai',
-    '--hidden-import=docx',
-    '--hidden-import=PyPDF2',
-    '--hidden-import=pandas',
-    '--hidden-import=numpy',
-    '--hidden-import=requests',
+        # --- 2. ARAYÜZ DOSYALARI ---
+        # Streamlit static dosyalarını ekliyoruz
+        f'--add-data={static_path}{sep}streamlit/static',
 
-    # --- METADATA KOPYALAMA ---
-    # Versiyon bilgileri için şart
-    '--copy-metadata=streamlit',
-    '--copy-metadata=google-generativeai',
-    '--copy-metadata=requests',
-    '--copy-metadata=packaging',
-    # regex paketini kaldırdım, eğer yukarıdaki pip install regex'i yaptıysanız
-    # aşağıdaki satırın başındaki # işaretini kaldırabilirsiniz.
-    # '--copy-metadata=regex',
-]
+        # --- 3. GİZLİ MODÜLLER (HIDDEN IMPORTS) ---
+        # Streamlit için gerekli gizli importlar
+        '--hidden-import=streamlit',
+        '--hidden-import=streamlit.runtime.scriptrunner.magic_funcs',
+        '--hidden-import=streamlit.runtime.scriptrunner.script_runner',
+        '--hidden-import=streamlit.web.cli',
+        '--hidden-import=streamlit.runtime.media_file_manager',
+        '--hidden-import=streamlit.runtime.memory_media_file_manager',
+        '--hidden-import=streamlit.elements',
+        '--hidden-import=streamlit.proto',
+        '--hidden-import=streamlit.logger',
+        '--hidden-import=streamlit.config',
 
-# Eğer ikon varsa komutlara ekle
-if os.path.exists(icon_file):
-    print(f"✅ İkon eklendi: {icon_file}")
-    commands.insert(3, f'--icon={icon_file}')
-else:
-    print("⚠️ İkon bulunamadı, varsayılan ikon kullanılacak.")
+        # Proje bağımlılıkları
+        '--hidden-import=requests',
+        '--hidden-import=PyPDF2',
+        '--hidden-import=docx',
+        '--hidden-import=python-docx',
+        '--hidden-import=pandas',
+        '--hidden-import=numpy',
 
-print("🚀 Derleme işlemi başlıyor...")
+        # JSON ve diğer temel modüller
+        '--hidden-import=json',
+        '--hidden-import=uuid',
+        '--hidden-import=dataclasses',
+        '--hidden-import=typing',
 
-# 2. PyInstaller'ı çalıştır
-try:
-    PyInstaller.__main__.run(commands)
-    print("\n✅ İŞLEM BAŞARIYLA TAMAMLANDI!")
-    print("Oluşan dosyayı 'dist' klasöründe bulabilirsiniz.")
-except Exception as e:
-    print(f"\n❌ BİR HATA OLUŞTU: {e}")
+        # --- EXCLUDES (Boyut küçültme için) ---
+        '--exclude-module=matplotlib',
+        '--exclude-module=tkinter',
+        '--exclude-module=unittest',
+        '--exclude-module=pydoc',
+
+        # --- METADATA ---
+        '--copy-metadata=streamlit',
+        '--copy-metadata=requests',
+        '--copy-metadata=packaging',
+    ]
+
+    # Eğer ikon varsa komutlara ekle
+    if icon_file.exists():
+        print(f"✅ İkon eklendi: {icon_file}")
+        commands.insert(5, f'--icon={icon_file}')  # 5. sıraya ekliyoruz
+    else:
+        print("⚠️ İkon bulunamadı, varsayılan ikon kullanılacak.")
+
+    print("🚀 Derleme işlemi başlıyor...")
+    print(f"Komutlar: {' '.join(commands[:3])} ... ({len(commands)} toplam parametre)")
+
+    # 2. PyInstaller'ı çalıştır
+    try:
+        PyInstaller.__main__.run(commands)
+        print("\n✅ İŞLEM BAŞARIYLA TAMAMLANDI!")
+        print("Oluşan dosyayı 'dist' klasöründe bulabilirsiniz.")
+
+        # Oluşan exe dosyasının bilgilerini göster
+        exe_path = Path("dist") / "UFT-BILSEM.exe"
+        if exe_path.exists():
+            size_mb = exe_path.stat().st_size / (1024 * 1024)
+            print(f"📁 EXE Dosya Boyutu: {size_mb:.1f} MB")
+            print(f"📍 Dosya Konumu: {exe_path.absolute()}")
+
+    except Exception as e:
+        print(f"\n❌ BİR HATA OLUŞTU: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    build_executable()
