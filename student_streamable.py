@@ -4,25 +4,9 @@ import requests
 import PyPDF2
 from docx import Document
 from datetime import datetime
-from typing import List, Optional, Generator, Dict, Any
+from typing import List, Optional, Generator, Dict
 from dataclasses import dataclass, field, asdict
 import uuid
-
-# --- Kütüphane Yüklemeleri ---
-try:
-    import openai
-except ImportError:
-    openai = None
-
-try:
-    import anthropic
-except ImportError:
-    anthropic = None
-
-try:
-    import google.generativeai as genai
-except ImportError:
-    genai = None
 
 
 class Config:
