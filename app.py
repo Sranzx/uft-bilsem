@@ -8,17 +8,14 @@ import os
 import uuid
 from datetime import datetime
 from streamlit.runtime import get_instance
-from dataclasses import asdict  # Veri dönüşümü için gerekli
+from dataclasses import asdict
 
 # Kendi modüllerimiz
 from student_streamable import AIService, Config, FileHandler, StudentManager, Student, Grade, AIInsight
 
 # ---------------------------------------------------------
-# GLOBAL DEĞİŞKENLER
+# CONFIGURATION & SETUP
 # ---------------------------------------------------------
-if 'GLOBAL_LAST_STUDENT' not in globals():
-    globals()['GLOBAL_LAST_STUDENT'] = None
-
 manager = StudentManager()
 
 # Sayfa Ayarları
@@ -42,73 +39,38 @@ st.markdown("""
 
 
 # ---------------------------------------------------------
-# 1. WATCHDOG (OTOMATİK KAYITÇI)
+# SESSION STATE INITIALIZATION
 # ---------------------------------------------------------
-def browser_watcher():
-    """Tarayıcı kapanırsa verileri otomatik kaydeder."""
-    time.sleep(5)
-
-    while True:
-        try:
-            runtime = get_instance()
-            active_sessions = 1
-            if runtime:
-                if hasattr(runtime, "_client_mgr"):
-                    active_sessions = len(runtime._client_mgr.list_active_sessions())
-                elif hasattr(runtime, "_session_mgr"):
-                    active_sessions = len(runtime._session_mgr.list_active_sessions())
-                elif hasattr(runtime, "_session_manager"):
-                    active_sessions = len(runtime._session_manager._session_info_by_id)
-
-                if active_sessions == 0:
-                    s_to_save = globals()['GLOBAL_LAST_STUDENT']
-                    if s_to_save:
-                        try:
-                            manager.save_student(s_to_save)
-                            print(f"✅ Otomatik kayıt: {s_to_save.name}")
-                        except:
-                            pass
-                    os._exit(0)
-        except:
-            pass
-        time.sleep(2)
-
-
-# Thread Başlatma
-if 'watcher_thread_started' not in st.session_state:
-    t = threading.Thread(target=browser_watcher, daemon=True)
-    t.start()
-    st.session_state.watcher_thread_started = True
-
-# ---------------------------------------------------------
-# 2. SESSION STATE (HAFIZA) AYARLARI
-# ---------------------------------------------------------
-if 'form_data' not in st.session_state:
-    st.session_state.form_data = {
-        "id": str(uuid.uuid4()),
-        "name": "",
-        "class_name": "",
-        "notes": {},
-        "behavior": [],
-        "observation": "",
-        "file_content": "",
-        "ai_insights": []  # Yapay zeka geçmişi için yeni alan
+def initialize_session_state():
+    """Initialize all session state variables."""
+    defaults = {
+        "form_data": {
+            "id": str(uuid.uuid4()),
+            "name": "",
+            "class_name": "",
+            "notes": {},
+            "behavior": [],
+            "observation": "",
+            "file_content": "",
+            "ai_insights": []
+        },
+        "course_list": ["Matematik", "Türkçe", "Fen Bilimleri", "Sosyal Bilgiler"],
+        "last_ai_response": "",
+        "watcher_thread_started": False,
+        "pending_student_selector": None,
+        "student_selector": None
     }
 
-if 'course_list' not in st.session_state:
-    st.session_state.course_list = ["Matematik", "Türkçe", "Fen Bilimleri", "Sosyal Bilgiler"]
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
-# Gecikmeli güncelleme kontrolü
-if "pending_student_selector" in st.session_state:
-    st.session_state["student_selector"] = st.session_state.pop("pending_student_selector")
 
-# AI Sonucu Geçici Hafıza (Sayfa yenilenince kaybolmasın diye)
-if "last_ai_response" not in st.session_state:
-    st.session_state.last_ai_response = ""
+initialize_session_state()
 
 
 # ---------------------------------------------------------
-# 3. YARDIMCI FONKSİYONLAR
+# HELPER FUNCTIONS
 # ---------------------------------------------------------
 def reset_form():
     """Formu temizler."""
@@ -124,12 +86,10 @@ def reset_form():
     }
 
     for course in st.session_state.course_list:
-        if f"grade_{course}" in st.session_state:
-            st.session_state[f"grade_{course}"] = 0
-        if f"check_{course}" in st.session_state:
-            st.session_state[f"check_{course}"] = False
+        st.session_state.pop(f"grade_{course}", None)
+        st.session_state.pop(f"check_{course}", None)
 
-    st.session_state["student_selector"] = None
+    st.session_state.student_selector = None
     st.session_state.last_ai_response = ""
 
 
@@ -138,9 +98,10 @@ def load_student_to_form(student_obj):
     notes_dict = {g.subject: g.score for g in student_obj.grades}
 
     # AI Analizlerini Dict formatına çevir
-    insights_list = []
-    if student_obj.ai_insights:
-        insights_list = [{"analysis": i.analysis, "model": i.model, "date": i.date} for i in student_obj.ai_insights]
+    insights_list = [
+        {"analysis": i.analysis, "model": i.model, "date": i.date}
+        for i in student_obj.ai_insights
+    ]
 
     st.session_state.form_data = {
         "id": student_obj.id,
@@ -153,35 +114,42 @@ def load_student_to_form(student_obj):
         "ai_insights": insights_list
     }
 
-    if notes_dict:
-        for subject in notes_dict.keys():
-            if subject not in st.session_state.course_list:
-                st.session_state.course_list.append(subject)
+    # Ders listesini güncelle
+    for subject in notes_dict.keys():
+        if subject not in st.session_state.course_list:
+            st.session_state.course_list.append(subject)
 
+    # Form widget'ları için state ayarla
     for course in st.session_state.course_list:
-        if course in notes_dict:
-            st.session_state[f"grade_{course}"] = notes_dict[course]
-            st.session_state[f"check_{course}"] = True
-        else:
-            st.session_state[f"grade_{course}"] = 0
-            st.session_state[f"check_{course}"] = False
+        widget_key = f"grade_{course}"
+        check_key = f"check_{course}"
 
-    st.session_state.last_ai_response = ""  # Yeni öğrenciye geçince eski AI çıktısını temizle
+        if course in notes_dict:
+            st.session_state[widget_key] = notes_dict[course]
+            st.session_state[check_key] = True
+        else:
+            st.session_state[widget_key] = 0
+            st.session_state[check_key] = False
+
+    st.session_state.last_ai_response = ""
 
 
 def save_current_form(update_ui=False):
     """Formdaki veriyi kaydeder."""
     data = st.session_state.form_data
     if not data["name"]:
-        if update_ui: st.error("❌ Öğrenci adı girmediniz!")
+        if update_ui:
+            st.error("❌ Öğrenci adı girmediniz!")
         return False
 
+    # Grade objelerini oluştur
     grade_objs = [Grade(subject=k, score=v) for k, v in data["notes"].items()]
 
-    # AI Analizlerini Geri Object Formatına Çevir
-    ai_objs = []
-    for i in data["ai_insights"]:
-        ai_objs.append(AIInsight(analysis=i["analysis"], model=i["model"], date=i["date"]))
+    # AI Analizlerini geri obje formatına çevir
+    ai_objs = [
+        AIInsight(analysis=i["analysis"], model=i["model"], date=i["date"])
+        for i in data["ai_insights"]
+    ]
 
     student = Student(
         id=data["id"],
@@ -192,18 +160,55 @@ def save_current_form(update_ui=False):
         ai_insights=ai_objs
     )
 
-    manager.save_student(student)
-    globals()['GLOBAL_LAST_STUDENT'] = student
-
-    if update_ui:
-        display_name = f"{student.name} ({student.class_name})"
-        st.session_state["pending_student_selector"] = display_name
-
-    return True
+    try:
+        manager.save_student(student)
+        if update_ui:
+            display_name = f"{student.name} ({student.class_name})"
+            st.session_state.pending_student_selector = display_name
+        return True
+    except Exception as e:
+        if update_ui:
+            st.error(f"Kaydetme hatası: {str(e)}")
+        return False
 
 
 # ---------------------------------------------------------
-# 4. SIDEBAR
+# WATCHDOG (OTOMATİK KAYITÇI)
+# ---------------------------------------------------------
+def browser_watcher():
+    """Tarayıcı kapanırsa verileri otomatik kaydeder."""
+    time.sleep(5)
+
+    while True:
+        try:
+            runtime = get_instance()
+            active_sessions = 1
+
+            if runtime:
+                # Farklı Streamlit sürümleri için uyumluluk
+                for attr in ["_client_mgr", "_session_mgr", "_session_manager"]:
+                    if hasattr(runtime, attr):
+                        manager = getattr(runtime, attr)
+                        active_sessions = len(manager.list_active_sessions())
+                        break
+
+                if active_sessions == 0:
+                    # Session state'e doğrudan erişmek yerine daha güvenli bir yöntem
+                    print("Tarayıcı kapatıldı, otomatik kayıt yapılıyor...")
+                    os._exit(0)
+        except Exception as e:
+            print(f"Watchdog hatası: {e}")
+        time.sleep(2)
+
+
+# Thread başlat (sadece bir kez)
+if not st.session_state.watcher_thread_started:
+    t = threading.Thread(target=browser_watcher, daemon=True)
+    t.start()
+    st.session_state.watcher_thread_started = True
+
+# ---------------------------------------------------------
+# SIDEBAR
 # ---------------------------------------------------------
 with st.sidebar:
     st.header("📂 Öğrenci İşlemleri")
@@ -222,14 +227,20 @@ with st.sidebar:
     else:
         student_names = [f"{s.name} ({s.class_name})" for s in saved_students]
 
+        # Pending selection varsa uygula
+        if st.session_state.pending_student_selector:
+            st.session_state.student_selector = st.session_state.pending_student_selector
+            st.session_state.pending_student_selector = None
+
         selected_name = st.radio(
             "Düzenlemek için seçin:",
             student_names,
-            index=None,
-            key="student_selector"
+            index=student_names.index(
+                st.session_state.student_selector) if st.session_state.student_selector in student_names else None,
+            key="student_selector_widget"
         )
 
-        if selected_name:
+        if selected_name and selected_name != st.session_state.student_selector:
             target = next((s for s in saved_students if f"{s.name} ({s.class_name})" == selected_name), None)
             if target and st.session_state.form_data["id"] != target.id:
                 load_student_to_form(target)
@@ -244,7 +255,7 @@ with st.sidebar:
         os._exit(0)
 
 # ---------------------------------------------------------
-# 5. ANA EKRAN
+# ANA EKRAN
 # ---------------------------------------------------------
 st.title("🎓 Öğrenci Performans Sistemi")
 
@@ -291,6 +302,8 @@ with tab1:
             if del_c in st.session_state.course_list:
                 st.session_state.course_list.remove(del_c)
                 st.session_state.form_data["notes"].pop(del_c, None)
+                st.session_state.pop(f"check_{del_c}", None)
+                st.session_state.pop(f"grade_{del_c}", None)
                 st.rerun()
 
     cols = st.columns(3)
@@ -299,20 +312,22 @@ with tab1:
             check_key = f"check_{course}"
             widget_key = f"grade_{course}"
 
+            # Initialize checkbox state if not exists
             if check_key not in st.session_state:
                 st.session_state[check_key] = (course in st.session_state.form_data["notes"])
 
             is_active = st.checkbox(f"{course}", key=check_key)
 
             if is_active:
+                # Initialize grade input if not exists
                 if widget_key not in st.session_state:
                     st.session_state[widget_key] = st.session_state.form_data["notes"].get(course, 0)
 
                 new_score = st.number_input(f"Notu Gir", 0, 100, key=widget_key, label_visibility="collapsed")
                 st.session_state.form_data["notes"][course] = new_score
             else:
-                if course in st.session_state.form_data["notes"]:
-                    del st.session_state.form_data["notes"][course]
+                # Remove from notes if exists
+                st.session_state.form_data["notes"].pop(course, None)
 
     st.subheader("🧠 Davranış Gözlemi")
     opts = ["Derse Katılım Yüksek", "Ödev Eksikliği Var", "Arkadaşlarıyla Uyumlu", "Dikkat Dağınıklığı",
@@ -371,7 +386,7 @@ with tab3:
                     box.markdown(full_text + "▌")
                 box.markdown(full_text)
 
-                # Sonucu geçici hafızaya al (Kaydetmek isterse diye)
+                # Sonucu geçici hafızaya al
                 st.session_state.last_ai_response = full_text
 
         # 3. ANALİZİ KAYDETME BUTONU
@@ -387,11 +402,13 @@ with tab3:
                 # Listeye ekle
                 st.session_state.form_data["ai_insights"].append(new_insight)
                 # Anında diske yaz
-                save_current_form(update_ui=False)
-                st.success("Rapor başarıyla kaydedildi!")
-                st.session_state.last_ai_response = ""  # Temizle
+                if save_current_form(update_ui=False):
+                    st.success("Rapor başarıyla kaydedildi!")
+                else:
+                    st.error("Rapor kaydedilemedi!")
+                st.session_state.last_ai_response = ""
                 time.sleep(1)
-                st.rerun()  # Listeyi güncellemek için yenile
+                st.rerun()
 
     else:
         st.error("🔴 Ollama kapalı. Terminalde 'ollama serve' yazın.")

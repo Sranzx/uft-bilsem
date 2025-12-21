@@ -6,26 +6,23 @@ from docx import Document
 from datetime import datetime
 from typing import List, Optional, Generator, Dict, Any
 from dataclasses import dataclass, field, asdict
+import uuid
 
 # --- Kütüphane Yüklemeleri ---
-openai: Any = None
-anthropic: Any = None
-genai: Any = None
-
 try:
     import openai
 except ImportError:
-    pass
+    openai = None
 
 try:
     import anthropic
 except ImportError:
-    pass
+    anthropic = None
 
 try:
     import google.generativeai as genai
 except ImportError:
-    pass
+    genai = None
 
 
 class Config:
@@ -73,13 +70,11 @@ class Student:
 
     @classmethod
     def from_dict(cls, data: Dict):
-        # JSON verisi bir sözlük değilse (örn: liste ise) hata ver
+        # JSON verisi bir sözlük değilse hata ver
         if not isinstance(data, dict):
             raise ValueError("Veri formatı geçersiz (Dict bekleniyor)")
 
         # 1. KONTROL: Bu gerçekten bir öğrenci dosyası mı?
-        # En azından isim, sınıf veya notlar alanından biri olmalı.
-        # Aksi takdirde bu bir config veya changelog dosyasıdır.
         is_student = any(k in data for k in ["name", "class_name", "grades", "behavior_notes", "class"])
         if not is_student:
             raise ValueError("Bu bir öğrenci dosyası değil.")
@@ -89,7 +84,6 @@ class Student:
             data["class_name"] = data["class"]
 
         if "id" not in data:
-            import uuid
             data["id"] = str(uuid.uuid4())
 
         # 3. ALT NESNELERİ GÜVENLİ OLUŞTURMA
@@ -98,24 +92,27 @@ class Student:
             try:
                 valid_g = {k: v for k, v in g.items() if k in Grade.__annotations__}
                 grades.append(Grade(**valid_g))
-            except:
-                pass
+            except Exception as e:
+                print(f"Grade parsing error: {e}")
+                continue
 
         notes = []
         for n in data.get("behavior_notes", []):
             try:
                 valid_n = {k: v for k, v in n.items() if k in BehaviorNote.__annotations__}
                 notes.append(BehaviorNote(**valid_n))
-            except:
-                pass
+            except Exception as e:
+                print(f"BehaviorNote parsing error: {e}")
+                continue
 
         insights = []
         for i in data.get("ai_insights", []):
             try:
                 valid_i = {k: v for k, v in i.items() if k in AIInsight.__annotations__}
                 insights.append(AIInsight(**valid_i))
-            except:
-                pass
+            except Exception as e:
+                print(f"AIInsight parsing error: {e}")
+                continue
 
         # 4. ANA NESNEYİ OLUŞTURMA
         exclude_fields = {"grades", "behavior_notes", "ai_insights"}
@@ -125,10 +122,10 @@ class Student:
             if k in cls.__annotations__ and k not in exclude_fields:
                 simple_data[k] = v
 
-        # Eksik alanları varsayılanla doldur (Ama artık kontrolümüz var, boş dosya gelmez)
-        if "name" not in simple_data: simple_data["name"] = "İsimsiz Öğrenci"
-        if "class_name" not in simple_data: simple_data["class_name"] = ""
-        if "file_content" not in simple_data: simple_data["file_content"] = ""
+        # Eksik alanları varsayılanla doldur
+        simple_data.setdefault("name", "İsimsiz Öğrenci")
+        simple_data.setdefault("class_name", "")
+        simple_data.setdefault("file_content", "")
 
         return cls(
             **simple_data,
@@ -144,6 +141,7 @@ class FileHandler:
         text = ""
         try:
             file_type = uploaded_file.name.split('.')[-1].lower()
+
             if file_type == 'pdf':
                 reader = PyPDF2.PdfReader(uploaded_file)
                 for page in reader.pages:
@@ -154,6 +152,9 @@ class FileHandler:
                     text += para.text + "\n"
             elif file_type == 'txt':
                 text = uploaded_file.getvalue().decode("utf-8")
+            else:
+                return "Desteklenmeyen dosya formatı"
+
             return text[:15000]
         except Exception as e:
             return f"Hata: {str(e)}"
@@ -161,11 +162,12 @@ class FileHandler:
 
 class StudentManager:
     def __init__(self):
-        if not os.path.exists(Config.DATA_DIR):
-            os.makedirs(Config.DATA_DIR)
+        self.data_dir = Config.DATA_DIR
+        if not os.path.exists(self.data_dir):
+            os.makedirs(self.data_dir)
 
     def _get_path(self, student_id: str) -> str:
-        return os.path.join(Config.DATA_DIR, f"{student_id}.json")
+        return os.path.join(self.data_dir, f"{student_id}.json")
 
     def save_student(self, student: Student) -> None:
         student.last_updated = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -175,6 +177,7 @@ class StudentManager:
             print(f"Kayıt OK: {student.name}")
         except Exception as e:
             print(f"Kayıt Hatası: {e}")
+            raise
 
     def load_student(self, student_id: str) -> Optional[Student]:
         path = self._get_path(student_id)
@@ -185,19 +188,18 @@ class StudentManager:
                 data = json.load(f)
             return Student.from_dict(data)
         except Exception as e:
-            # Hata varsa (örn: Changelog dosyasıysa) sessizce None dön
-            # print(f"⚠️ Dosya Yüklenemedi ({student_id}): {e}")
+            print(f"Dosya Yüklenemedi ({student_id}): {e}")
             return None
 
     def get_all_students(self) -> List[Student]:
         students = []
-        if not os.path.exists(Config.DATA_DIR):
+        if not os.path.exists(self.data_dir):
             return []
 
         # YASAKLI DOSYALAR LİSTESİ
         ignored_files = {"changelog.json", "settings.json", "config.json", ".ds_store"}
 
-        for filename in os.listdir(Config.DATA_DIR):
+        for filename in os.listdir(self.data_dir):
             if filename.lower() in ignored_files:
                 continue
 
@@ -207,7 +209,8 @@ class StudentManager:
                     student = self.load_student(student_id)
                     if student:
                         students.append(student)
-                except:
+                except Exception as e:
+                    print(f"Öğrenci yüklenirken hata: {student_id}, {e}")
                     continue
 
         students.sort(key=lambda x: x.name)
@@ -230,36 +233,48 @@ class AIService:
             try:
                 response = requests.get(f"{Config.OLLAMA_URL}/api/tags", timeout=3)
                 return response.status_code == 200
-            except:
+            except Exception as e:
+                print(f"Ollama bağlantı hatası: {e}")
                 return False
         return True
 
     def get_ollama_models(self) -> List[str]:
-        if self.provider != "Ollama": return [self.model]
+        if self.provider != "Ollama":
+            return [self.model]
         try:
             r = requests.get(f"{Config.OLLAMA_URL}/api/tags", timeout=2)
             if r.status_code == 200:
                 models = [m['name'] for m in r.json().get('models', [])]
                 return models if models else [Config.DEFAULT_MODEL]
             return [Config.DEFAULT_MODEL]
-        except:
+        except Exception as e:
+            print(f"Model listesi alınamadı: {e}")
             return [Config.DEFAULT_MODEL]
 
     def generate_stream(self, prompt: str, system_prompt: str) -> Generator[str, None, None]:
-        full = f"{system_prompt}\n\nVERİLER:\n{prompt}"
+        full_prompt = f"{system_prompt}\n\nVERİLER:\n{prompt}"
         try:
             if self.provider == "Ollama":
-                yield from self._stream_ollama(full)
+                yield from self._stream_ollama(full_prompt)
             else:
                 yield f"Hata: {self.provider} pasif."
         except Exception as e:
             yield f"Hata: {e}"
 
     def _stream_ollama(self, prompt: str) -> Generator[str, None, None]:
-        payload = {"model": self.model, "prompt": prompt, "stream": True, "options": {"temperature": 0.7}}
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": True,
+            "options": {"temperature": 0.7}
+        }
         try:
-            with requests.post(f"{Config.OLLAMA_URL}/api/generate", json=payload, stream=True,
-                               timeout=Config.TIMEOUT) as r:
+            with requests.post(
+                    f"{Config.OLLAMA_URL}/api/generate",
+                    json=payload,
+                    stream=True,
+                    timeout=Config.TIMEOUT
+            ) as r:
                 if r.status_code == 200:
                     for line in r.iter_lines():
                         if line:
@@ -269,7 +284,7 @@ class AIService:
                                 if response_text:
                                     yield response_text
                             except json.JSONDecodeError:
-                                pass
+                                continue
                 else:
                     yield f"API Hata: {r.status_code}"
         except Exception as e:
