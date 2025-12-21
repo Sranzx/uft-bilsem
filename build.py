@@ -81,6 +81,9 @@ def build_executable():
         '--hidden-import=streamlit.elements.utils',
         '--hidden-import=streamlit.runtime.state',
         '--hidden-import=streamlit.runtime.secrets',
+        '--hidden-import=streamlit.web.server.server_util',
+        '--hidden-import=streamlit.web.server',
+        '--hidden-import=streamlit.web.bootstrap',
 
         # Proje bağımlılıkları
         '--hidden-import=requests',
@@ -99,6 +102,9 @@ def build_executable():
         '--hidden-import=typing',
         '--hidden-import=datetime',
         '--hidden-import=threading',
+        '--hidden-import=os',
+        '--hidden-import=sys',
+        '--hidden-import=pathlib',
 
         # --- EXCLUDES (Boyut küçültme için) ---
         '--exclude-module=matplotlib',
@@ -109,8 +115,9 @@ def build_executable():
         '--exclude-module=PIL',
         '--exclude-module=cryptography',
         '--exclude-module=pytz',
+        '--exclude-module=pytest',
 
-        # --- METADATA ---
+        # --- METADATA (Fixed section) ---
         '--copy-metadata=streamlit',
         '--copy-metadata=requests',
         '--copy-metadata=packaging',
@@ -120,7 +127,7 @@ def build_executable():
         '--copy-metadata=click',
         '--copy-metadata=gitdb',
         '--copy-metadata=GitPython',
-        '--copy-metadata=importlib-metadata',
+        '--copy-metadata=importlib-metadata',  # FIXED: Added this
         '--copy-metadata=Jinja2',
         '--copy-metadata=jsonschema',
         '--copy-metadata=jsonschema-specifications',
@@ -145,9 +152,9 @@ def build_executable():
         '--copy-metadata=toml',
         '--copy-metadata=toolz',
         '--copy-metadata=tornado',
-        '--copy-metadata=typing_extensions',
+        '--copy-metadata=typing_extensions',  # FIXED: Added this
         '--copy-metadata=watchdog',
-        '--copy-metadata=zipp',
+        '--copy-metadata=zipp',  # FIXED: Added this
     ]
 
     # UPX kullan
