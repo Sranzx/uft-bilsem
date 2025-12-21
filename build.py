@@ -5,6 +5,25 @@ import PyInstaller.__main__
 from pathlib import Path
 
 
+def check_upx():
+    """Check if UPX is available in PATH"""
+    try:
+        import subprocess
+        result = subprocess.run(['upx', '--version'],
+                                capture_output=True,
+                                text=True,
+                                timeout=5)
+        if result.returncode == 0:
+            print("✅ UPX bulundu, dosya sıkıştırma etkin")
+            return True
+        else:
+            print("⚠️ UPX bulunamadı, dosya sıkıştırma devre dışı")
+            return False
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        print("⚠️ UPX bulunamadı, dosya sıkıştırma devre dışı")
+        return False
+
+
 def build_executable():
     # 1. Streamlit'in dosya yollarını bul
     streamlit_dir = os.path.dirname(streamlit.__file__)
@@ -22,6 +41,9 @@ def build_executable():
     # İşletim sistemi ayracı (Windows için ; Mac/Linux için :)
     sep = os.pathsep
 
+    # UPX kontrolü
+    use_upx = check_upx()
+
     # Komut listesini hazırlıyoruz
     commands = [
         'run_app.py',  # Başlatıcı dosya
@@ -30,7 +52,10 @@ def build_executable():
         '--clean',  # Önbelleği temizle
         '--noconfirm',  # Otomatik onay
         '--noconsole',  # Konsol penceresini gizle (production için)
-        # '--console',  # Debug için konsolu açmak isterseniz bunu kullanın
+
+        # Performans optimizasyonu
+        '--strip',  # Sembolleri kaldır
+        '--log-level=WARN',  # Sadece uyarı ve hataları göster
 
         # --- 1. GEREKLİ DOSYALAR ---
         # Ana uygulama dosyalarını ekle
@@ -53,6 +78,9 @@ def build_executable():
         '--hidden-import=streamlit.proto',
         '--hidden-import=streamlit.logger',
         '--hidden-import=streamlit.config',
+        '--hidden-import=streamlit.elements.utils',
+        '--hidden-import=streamlit.runtime.state',
+        '--hidden-import=streamlit.runtime.secrets',
 
         # Proje bağımlılıkları
         '--hidden-import=requests',
@@ -61,37 +89,86 @@ def build_executable():
         '--hidden-import=python-docx',
         '--hidden-import=pandas',
         '--hidden-import=numpy',
+        '--hidden-import=numpy.core._methods',
+        '--hidden-import=numpy.lib.format',
 
         # JSON ve diğer temel modüller
         '--hidden-import=json',
         '--hidden-import=uuid',
         '--hidden-import=dataclasses',
         '--hidden-import=typing',
+        '--hidden-import=datetime',
+        '--hidden-import=threading',
 
         # --- EXCLUDES (Boyut küçültme için) ---
         '--exclude-module=matplotlib',
         '--exclude-module=tkinter',
         '--exclude-module=unittest',
         '--exclude-module=pydoc',
+        '--exclude-module=scipy',
+        '--exclude-module=PIL',
+        '--exclude-module=cryptography',
+        '--exclude-module=pytz',
 
         # --- METADATA ---
         '--copy-metadata=streamlit',
         '--copy-metadata=requests',
         '--copy-metadata=packaging',
+        '--copy-metadata=altair',
+        '--copy-metadata=blinker',
+        '--copy-metadata=cachetools',
+        '--copy-metadata=click',
+        '--copy-metadata=gitdb',
+        '--copy-metadata=GitPython',
+        '--copy-metadata=importlib-metadata',
+        '--copy-metadata=Jinja2',
+        '--copy-metadata=jsonschema',
+        '--copy-metadata=jsonschema-specifications',
+        '--copy-metadata=markdown-it-py',
+        '--copy-metadata=mdurl',
+        '--copy-metadata=numpy',
+        '--copy-metadata=pandas',
+        '--copy-metadata=Pillow',
+        '--copy-metadata=protobuf',
+        '--copy-metadata=pyarrow',
+        '--copy-metadata=pydeck',
+        '--copy-metadata=Pygments',
+        '--copy-metadata=PyPDF2',
+        '--copy-metadata=python-dateutil',
+        '--copy-metadata=python-docx',
+        '--copy-metadata=referencing',
+        '--copy-metadata=rich',
+        '--copy-metadata=rpds-py',
+        '--copy-metadata=semver',
+        '--copy-metadata=smmap',
+        '--copy-metadata=tenacity',
+        '--copy-metadata=toml',
+        '--copy-metadata=toolz',
+        '--copy-metadata=tornado',
+        '--copy-metadata=typing_extensions',
+        '--copy-metadata=watchdog',
+        '--copy-metadata=zipp',
     ]
+
+    # UPX kullan
+    if use_upx:
+        commands.extend([
+            '--upx-dir=.',  # UPX'nin bulunduğu dizin
+        ])
 
     # Eğer ikon varsa komutlara ekle
     if icon_file.exists():
         print(f"✅ İkon eklendi: {icon_file}")
-        commands.insert(5, f'--icon={icon_file}')  # 5. sıraya ekliyoruz
+        commands.insert(7, f'--icon={icon_file}')  # 7. sıraya ekliyoruz
     else:
         print("⚠️ İkon bulunamadı, varsayılan ikon kullanılacak.")
 
     print("🚀 Derleme işlemi başlıyor...")
-    print(f"Komutlar: {' '.join(commands[:3])} ... ({len(commands)} toplam parametre)")
+    print(f"Komutlar: {' '.join(commands[:5])} ... ({len(commands)} toplam parametre)")
 
     # 2. PyInstaller'ı çalıştır
     try:
+        print("🔨 EXE dosyası oluşturuluyor, bu işlem birkaç dakika sürebilir...")
         PyInstaller.__main__.run(commands)
         print("\n✅ İŞLEM BAŞARIYLA TAMAMLANDI!")
         print("Oluşan dosyayı 'dist' klasöründe bulabilirsiniz.")
@@ -99,14 +176,24 @@ def build_executable():
         # Oluşan exe dosyasının bilgilerini göster
         exe_path = Path("dist") / "UFT-BILSEM.exe"
         if exe_path.exists():
-            size_mb = exe_path.stat().st_size / (1024 * 1024)
-            print(f"📁 EXE Dosya Boyutu: {size_mb:.1f} MB")
+            size_bytes = exe_path.stat().st_size
+            size_mb = size_bytes / (1024 * 1024)
+            print(f"📁 EXE Dosya Boyutu: {size_mb:.1f} MB ({size_bytes:,} bytes)")
             print(f"📍 Dosya Konumu: {exe_path.absolute()}")
+
+            # UPX uygulanmışsa bilgi ver
+            if use_upx:
+                print("🔒 UPX ile sıkıştırıldı")
+
+        return True
 
     except Exception as e:
         print(f"\n❌ BİR HATA OLUŞTU: {e}")
-        sys.exit(1)
+        import traceback
+        traceback.print_exc()
+        return False
 
 
 if __name__ == "__main__":
-    build_executable()
+    success = build_executable()
+    sys.exit(0 if success else 1)
