@@ -1,2 +1,8 @@
 /logs/
 /student_data/
+__pycache__/
+*.pyc
+venv/
+venv2/
+.DS_Store
+*.egg-info/
