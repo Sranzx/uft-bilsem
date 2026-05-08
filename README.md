@@ -1,120 +1,155 @@
 # UFT-BİLSEM — Yapay Zeka Destekli Öğrenci Ürün Dosyası Analizi
 
-Bu doküman, proje hakkındaki teknik olmayan jüri üyelerine ve değerlendiricilere projenin ne yaptığı, neden önemli olduğu ve nasıl çalıştırılacağı hakkında açık, anlaşılır bir rehber sunar. Kod ve mimariyle ilgili temel noktalar da sade bir dille açıklanmıştır.
+Bu doküman, proje hakkındaki teknik olmayan jüri üyelerine ve değerlendiricilere projenin ne yaptığı, neden önemli olduğu ve nasıl çalıştırılacağı hakkında açık, anlaşılır bir rehber sunar.
 
 ---
 
 ## Proje Özeti
-UFT-BİLSEM, öğretmenlerin veya rehberlik uzmanlarının öğrenci ürünlerini (ödevler, raporlar vb.) yerel olarak çalıştırılan bir yapay zeka motoru ile analiz edip pedagojik öneriler almasını sağlayan, verileri dışarıya göndermeyen (offline) bir uygulamadır.
+
+UFT-BİLSEM, öğretmenlerin öğrenci ürünlerini (ödevler, projeler, sınavlar, davranış kayıtları vb.) yerel olarak çalıştırılan bir yapay zeka motoru ile analiz edip pedagojik öneriler almasını sağlayan, verileri dışarıya göndermeyen (offline) bir uygulamadır.
+
+Uygulama, öğrencilerin bireysel gelişimlerini takip etmek, performanslarını analiz etmek ve kişiselleştirilmiş öğretim önerileri oluşturmak için geliştirilmiştir.
 
 ---
 
-## Neden Bu Proje Önemli?
-- Gizlilik odaklı: Öğrenci verileri cihazı/yerel ağ dışına çıkmaz — KVKK ve veri mahremiyeti gereksinimlerine uygundur.
-- Kullanımı kolay: Arayüzü Streamlit ile hazırlanmış, öğretmenlerin teknik olmayan kişilerin kolayca kullanabileceği şekilde tasarlanmıştır.
-- Güvenilir veriler: Geliştirilmiş kayıt/yedekleme ve kurtarma mekanizmaları sayesinde verileriniz güvenlidir; bozulma veya yanlışlık durumlarında geri dönebilirsiniz.
-- Yerel yapay zeka (Ollama): İnternet bağlantısı olmadan yerel model çalıştırarak analiz yapar.
+## Özellikler
+
+### Temel Özellikler
+- **Yerel Yapay Zeka Desteği**: Öğrenci dosyalarını Ollama ile çalışan yerel LLM üzerinden analiz eder
+- **Tamamen Offline**: İnternet bağlantısı gerektirmez, tüm işlemler yerel olarak yapılır
+- **Veri Gizliliği**: Öğrenci verileri cihazdan çıkmaz, KVKK ve uluslararası veri koruma standartlarına uygundur
+- **Streamlit Arayüzü**: Kullanımı kolay, modern ve responsive web arayüzü
+- **Çoklu Öğrenci Yönetimi**: Öğrenci ekleme, düzenleme, silme ve arama özellikleri
+
+### Gelişmiş Veri Yönetimi
+- **Veri Doğrulama**: Tüm öğrenci verileri SHA256 hash ile doğrulanır
+- **Atomik Kayıt**: Veri kaybını önlemek için geçici dosya + atomik değiştirme yöntemi
+- **Esnek Veri Yapıları**: Notlar, ödevler, projeler, sınavlar ve davranış kayıtları için ayrı yapılar
+- **CSV Dışa Aktarma**: Öğrenci verilerini ve ödev detaylarını CSV formatında dışa aktarma
+- **Otomatik Temizleme**: Geçersiz veya bozulmuş veriler otomatik olarak filtrelenebilir
+
+### Kullanıcı Deneyimi
+- **Veri Entegrasyonu**: Öğrenci verilerini tek bir merkezden yönetme
+- **Veri Gözlemleme**: Öğrenci performanslarını ve davranışlarını gözlemleme
+- **Ödev Takibi**: Ödev durumlarını ve teslim tarihlerini takip etme
+- **Proje Yönetimi**: Öğrenci projelerini takip etme ve değerlendirme
+- **Sınav Sonuçları**: Sınav sonuçlarını kaydetme ve analiz etme
+- **Davranış Kayıtları**: Öğrenci davranışlarını ve gözlemleri kaydetme
 
 ---
 
-## Öne Çıkan Özellikler
-- Yerel LLM tabanlı analiz (Ollama ile): Öğrenci dosyalarını analiz eder, öneriler üretir.
-- JSON tabanlı sade kayıt: Her öğrenci verisi dosya olarak veya merkezi bir `data` dosyasında saklanabilir.
-- Gelişmiş kalıcılık (persistence) modülü:
-  - Atomik kayıt (transactional save): Kaydederken dosyanın yarım kalmasını engeller.
-  - Otomatik yedekleme (backups) ve versiyonlama.
-  - Değişiklik kayıtları (changelog) ile kimin/ne zaman değiştirdiğinin izlenmesi.
-  - Veri doğrulama (hash/integrity) ve bozuk dosya kurtarma mekanizmaları.
-  - CSV/JSON/pickle şeklinde dışa aktarma (export).
-- Otomatik ve manuel kayıt seçenekleri + tarayıcı kapandığında otomatik yedekleme.
+## Teknik Detaylar
+
+### Mimari Bileşenler
+- **run_app.py**: Streamlit uygulamasının başlatıcısı, PyInstaller ile uyumlu çalışacak şekilde tasarlandı
+- **app.py**: Streamlit tabanlı kullanıcı arayüzü - öğrenci yönetimi, navigasyon ve veri görüntüleme
+- **core.py**: Ana veri işleme ve doğrulama modülü - öğrenci verilerinin yönetimi, doğrulanması ve kaydedilmesi
+- **build.py**: PyInstaller ile EXE dosyası oluşturma betiği - dağıtım için otomatik paketleme
+
+### Güvenlik ve Veri Bütünlüğü
+- **SHA256 Hash Doğrulaması**: Her öğrenci dosyası değiştiğinde hash değeri hesaplanır ve doğrulanır
+- **Atomik Yazma**: Veri yazılırken önce geçici dosyaya yazılır, sonra asıl dosya üzerine yazılır
+- **Hata Toleranslı Okuma**: Bozulmuş veri olması durumunda düzgün şekilde ele alınır
 
 ---
 
-## Kullanılan Bileşenler
-- app.py: Streamlit tabanlı kullanıcı arayüzü — form girişi, dosya yükleme, kayıt, analiz.
-- student_streamable.py: Öğrenci modelleri, dosya okuma (PDF/DOCX/TXT), temel öğrenci kaydetme/yükleme mantığı.
-- persistence.py: Yeni eklenen güçlü kalıcılık modülü — yedekleme, transactional kaydetme, kurtarma, değişiklik günlüğü, export fonksiyonları.
-- Ollama (yerel LLM): Analizleri yapan yerel model sunucusu (kullanıcı bilgisayarında çalıştırılmalı).
+## Kurulum ve Çalıştırma
 
----
+### Gereksinimler
+- Python 3.8 veya üzeri
+- Git
+- Ollama (yerel LLM servisi)
 
-## Teknik Olmayan Açıklama — "Persistence" (Veri Saklama) Nedir ve Neden Geliştirildi?
-Persistence: Uygulamanın verileri (öğrenci bilgileri, notlar, dosya içeriği, model analizleri) diske kaydetme biçimidir.
+### Kurulum Adımları
 
-Neden geliştirdik?
-- Dosya bozulması veya beklenmedik kapanma durumlarında veri kaybı yaşanmasın.
-- Geçmiş kayıtlar (sürümler) saklansın, istenirse geri dönüş yapılsın.
-- Kimin ne zaman değişiklik yaptığını görebilelim (denetlenebilirlik).
-- Veriler doğrulansın — kaydedilen veri bozulmadığını teyit edebilelim.
-
-Bu amaçla persistence.py içinde:
-- Atomic (geçişli) yazma: önce geçici dosyaya yazılır, sonra yerine konur — böylece asla yarım kalmış dosya olmaz.
-- BackupManager: Her önemli işlemin öncesinde veya araçla istenildiğinde yedek oluşturur; yedeklerin meta verileri saklanır.
-- ChangeLog: Kaydetme, güncelleme, geri alma gibi işlemleri zaman damgası ile kaydeder.
-- RecoveryManager: Bozulma durumunda en son sağlıklı yedekten geri döner.
-- ExportManager: Verileri CSV/JSON olarak dışarı verir, raporlama ve inceleme kolaylaşır.
-
----
-
-## İlk Kurulum ve Çalıştırma (Adım Adım)
-
-1. Gereksinimler:
-   - Python 3.8 veya üzeri
-   - Git
-   - Ollama (yerel LLM servisi) — proje offline inference hedeflediği için Ollama bilgisayarınızda çalışmalıdır.
-   - Gerekli Python kütüphaneleri: requirements.txt ile yüklenir.
-
-2. Repoyu klonlayın:
+1. **Depoyu klonlayın**:
    ```bash
    git clone https://github.com/Sranzx/uft-bilsem.git
    cd uft-bilsem
    ```
 
-3. Sanal ortam oluşturun ve bağımlılıkları yükleyin:
+2. **Sanal ortam oluşturun ve bağımlılıkları yükleyin**:
    ```bash
    python -m venv venv
    # Windows
    .\venv\Scripts\Activate.ps1
    # macOS/Linux
    source venv/bin/activate
-
+   
    pip install -r requirements.txt
    ```
 
-4. Ollama'yı başlatın (kurulduysa):
+3. **Ollama'yı başlatın**:
    ```bash
    ollama serve
    ```
-   Not: Model indirme örneği:
+   
+   Gerekli modeli indirin:
    ```bash
-   ollama pull gemma3
+   ollama pull llama3
    ```
 
-5. Uygulamayı başlatın:
-   - Geliştirici modu (Streamlit):
-     ```bash
-     streamlit run app.py
-     ```
-   - Veya hazırladığınız .exe varsa doğrudan çalıştırın.
+4. **Uygulamayı başlatın**:
+   ```bash
+   streamlit run run_app.py
+   ```
+
+### EXE Olarak Derleme (İsteğe Bağlı)
+Derlenmiş EXE dosyası oluşturmak için:
+```bash
+python build.py
+```
+
+Bu işlem sonrasında `dist/UFT-BILSEM.exe` dosyası oluşturulacaktır.
 
 ---
 
-## Geliştirici Notları (Kısa Teknik Özet)
-- Eski davranış: Her öğrenci için ayrı .json dosyası (student_data/). Bu yaklaşım taşınabilir ancak büyük projelerde yönetim zorlukları olabilir.
-- Yeni eklenen persistence.py:
-  - Merkezi bir `data/data.json` (veya tercih ettiğiniz format) ile tüm kayıtlar kontrol edilebilir.
-  - TransactionalStorage ile "yarım yazılma" riskine karşı geçici dosya + atomik replace stratejisi kullanılır.
-  - BackupManager, ChangeLog ve RecoveryManager bileşenleri veri bütünlüğünü ve geçmişi garanti eder.
-- student_streamable.py içindeki Student/Grade/AIInsight yapısı, persistence.py ile uyumlu biçimde kullanılmalı. (repository içinde örnek entegrasyon hazırlandı.)
+## Kullanım
+
+Uygulama açıldığında üç ana bölüme erişebilirsiniz:
+
+### Öğrenci Listele
+Tüm öğrencileri ve temel bilgilerini görüntüleyin. Her öğrenci için detaylı bilgilere ulaşabilir, öğrenciyi seçebilir veya silebilirsiniz.
+
+### Yeni Öğrenci Ekle
+Form aracılığıyla yeni öğrenci ekleyin. Otomatik olarak benzersiz ID atanır ve veri bütünlüğü sağlanır.
+
+### Öğrenci Ara
+İsim veya sınıf bilgisine göre öğrenci araması yapın.
 
 ---
 
-## Sık Karşılaşılan Sorunlar ve Çözümleri
-- Ollama çalışmıyor / model yüklenmemiş:
-  - Hata: Arayüzde "Ollama kapalı" uyarısı görürsünüz. Terminalde `ollama serve` çalıştırın ve modelin indiğinden emin olun.
-- Kaydetme başarısız/permission hatası:
-  - `data/` klasörü yazılabilir mi kontrol edin. Gerekirse uygulamayı yönetici/uygulama sahibi izinleriyle çalıştırın.
-- Bozuk JSON dosyası:
-  - `data/backups/` içinden son sağlıklı yedeği kullanarak geri yükleme yapılabilir (RecoveryManager).
+## Geliştirici Notları
+
+### Proje Yapısı
+- Veriler `student_data/` dizininde JSON dosyaları olarak saklanır
+- Her öğrenci için ayrı bir UUID ile tanımlanmış dosya oluşturulur
+- `core.py` tüm veri işlemlerini yönetir
+- Streamlit arayüzü `app.py` içinde tanımlanmıştır
+
+### Veri Yapısı
+Her öğrenci aşağıdaki yapıya sahiptir:
+```json
+{
+  "id": "benzersiz-uuid",
+  "name": "Öğrenci Adı",
+  "class_name": "Sınıf Bilgisi",
+  "grades": [],        // Notlar
+  "homeworks": [],     // Ödevler
+  "projects": [],      // Projeler
+  "exams": [],         // Sınavlar
+  "behavior": [],      // Davranış kayıtları
+  "observation": "",    // Genel gözlem notları
+  "last_updated": "YYYY-MM-DD HH:MM:SS",
+  "file_hash": "sha256-hash-degeri"
+}
+```
 
 ---
+
+## Katkıda Bulunma
+
+Projeye katkıda bulunmak için:
+1. Repository'yi fork'layın
+2. Yeni özellikler veya düzeltmeler ekleyin
+3. Test edin ve Pull n
