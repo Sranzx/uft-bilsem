@@ -2,8 +2,11 @@ import streamlit as st
 import json
 import time
 import uuid
+import threading
+import os
 from datetime import datetime
 from typing import Optional
+from streamlit.runtime import get_instance
 
 from core.models import (
     Student, Grade, Homework, Project, Exam, AIInsight,
@@ -52,7 +55,7 @@ def init_session():
         "editing_exam_id": None,
         "new_homework": {"title": "", "description": "", "subject": "", "due_date": "", "status": "pending"},
         "new_project": {"title": "", "description": "", "subject": "", "due_date": "", "status": "not_started"},
-        "new_exam": {"title": "", "subject": "", "date": "", "score": 0, "max_score": 100, "exam_type": "exam", "notes": ""},
+        "new_exam": {"title": "", "subject": "", "date": "", "score": 0.0, "max_score": 100.0, "exam_type": "exam", "notes": ""},
         "grade_inputs": {},
     }
     for k, v in defaults.items():
@@ -128,6 +131,45 @@ def save_grades(student: Student):
                 grades.append(Grade(subject=subject, score=score))
     student.grades = grades
     save_student(student)
+
+
+# ---------------------------------------------------------------------------
+# BROWSER WATCHDOG (auto-save on tab close)
+# ---------------------------------------------------------------------------
+def _save_before_exit():
+    sid = st.session_state.get("current_student_id")
+    if not sid:
+        return
+    student = repo.load(sid)
+    if student and student.name:
+        repo.save(student)
+
+
+def browser_watcher():
+    time.sleep(3)
+    while True:
+        try:
+            runtime = get_instance()
+            if runtime:
+                active = 1
+                for attr in ["_session_mgr", "_session_manager", "_client_mgr"]:
+                    mgr = getattr(runtime, attr, None)
+                    if mgr and hasattr(mgr, "list_active_sessions"):
+                        active = len(mgr.list_active_sessions())
+                        break
+
+                if active == 0:
+                    _save_before_exit()
+                    os._exit(0)
+        except Exception:
+            pass
+        time.sleep(2)
+
+
+if not st.session_state.get("_watcher_started"):
+    t = threading.Thread(target=browser_watcher, daemon=True)
+    t.start()
+    st.session_state._watcher_started = True
 
 
 # ---------------------------------------------------------------------------
@@ -765,7 +807,7 @@ with tabs[4]:
                     else:
                         exam = Exam(**exam_data)
                         current.exams.append(exam)
-                        st.session_state.new_exam = {"title": "", "subject": "", "date": "", "score": 0, "max_score": 100, "exam_type": "exam", "notes": ""}
+                        st.session_state.new_exam = {"title": "", "subject": "", "date": "", "score": 0.0, "max_score": 100.0, "exam_type": "exam", "notes": ""}
 
                     save_student(current)
                     st.rerun()
@@ -899,5 +941,3 @@ GÖREV: Öğrencinin akademik durumunu detaylı analiz et. Güçlü yönleri, ge
     else:
         st.error("🔴 Ollama servisi kapalı. Terminalde 'ollama serve' çalıştırın.")
         st.info("Kurulum için: https://ollama.ai")
-
-
