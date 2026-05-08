@@ -15,6 +15,7 @@ from core.models import (
 from core.storage import StudentRepository
 from core.file_handler import FileHandler
 from core.ai_service import AIService
+from core.exporter import CSVExporter, PDFExporter, get_homework_alerts
 
 repo = StudentRepository()
 
@@ -53,6 +54,9 @@ def init_session():
         "editing_homework_id": None,
         "editing_project_id": None,
         "editing_exam_id": None,
+        "nav_mode": "student",
+        "export_class_filter": "Tümü",
+        "export_subject_filter": "Tümü",
         "new_homework": {"title": "", "description": "", "subject": "", "due_date": "", "status": "pending"},
         "new_project": {"title": "", "description": "", "subject": "", "due_date": "", "status": "not_started"},
         "new_exam": {"title": "", "subject": "", "date": "", "score": 0.0, "max_score": 100.0, "exam_type": "exam", "notes": ""},
@@ -184,8 +188,6 @@ with st.sidebar:
     st.divider()
     st.subheader("📋 Öğrenci Listesi")
 
-    all_students = repo.get_all()
-
     if not all_students:
         st.info("Henüz kayıtlı öğrenci yok.")
     else:
@@ -207,10 +209,6 @@ with st.sidebar:
                 select_student(s.id)
 
     st.divider()
-    current = get_student()
-    if current:
-        if st.button("🗑️ Öğrenciyi Sil", use_container_width=True, type="secondary"):
-            delete_current_student()
     if st.button("🚪 Çıkış", use_container_width=True):
         st.stop()
 
@@ -218,43 +216,72 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # MAIN CONTENT
 # ---------------------------------------------------------------------------
-current = get_student()
+all_students = repo.get_all()
 
-if not current:
-    st.title("🎓 Öğrenci Takip Sistemi")
-    st.markdown("""
-    <div class="metric-card">
-    Sol menüden bir öğrenci seçin veya yeni bir öğrenci oluşturun.
-    <br><br>
-    <b>Özellikler:</b>
-    <br>📝 Not takibi &nbsp;|&nbsp; 📋 Ödev yönetimi &nbsp;|&nbsp; 📁 Proje takibi &nbsp;|&nbsp; 📊 Sınav kaydı &nbsp;|&nbsp; 🤖 Yapay Zeka Analizi
-    </div>
-    """, unsafe_allow_html=True)
+nav_mode = st.radio(
+    "Görünüm",
+    ["student", "overview", "export"],
+    format_func=lambda m: {"student": "👤 Öğrenci", "overview": "🏫 Sınıf", "export": "📥 Dışa Aktar"}[m],
+    horizontal=True,
+    label_visibility="collapsed"
+)
+st.session_state.nav_mode = nav_mode
 
-    total = len(all_students)
-    classes = set(s.class_name for s in all_students if s.class_name)
-    if total > 0:
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Toplam Öğrenci", total)
-        col2.metric("Sınıf Sayısı", len(classes))
-        pending_hw = sum(1 for s in all_students for hw in s.homeworks if hw.status in ("pending", "late"))
-        col3.metric("Bekleyen Ödev", pending_hw)
-    st.stop()
+if nav_mode == "student":
+    current = get_student()
 
-# ---- Student info bar ----
-col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
-with col1:
-    st.markdown(f"### ✏️ {current.name}")
-    if current.class_name:
-        st.caption(f"Sınıf: {current.class_name}")
-with col2:
-    st.metric("Ders Notu", f"{len(current.grades)} ders")
-with col3:
-    st.metric("Ödev", f"{len(current.homeworks)}")
-with col4:
-    st.metric("Sınav", f"{len(current.exams)}")
+    if not current:
+        st.title("🎓 Öğrenci Takip Sistemi")
+        st.markdown("""
+        <div class="metric-card">
+        Sol menüden bir öğrenci seçin veya yeni bir öğrenci oluşturun.
+        <br><br>
+        <b>Özellikler:</b>
+        <br>📝 Not takibi &nbsp;|&nbsp; 📋 Ödev yönetimi &nbsp;|&nbsp; 📁 Proje takibi &nbsp;|&nbsp; 📊 Sınav kaydı &nbsp;|&nbsp; 🤖 Yapay Zeka Analizi &nbsp;|&nbsp; 🏫 Sınıf görünümü
+        </div>
+        """, unsafe_allow_html=True)
 
-tabs = st.tabs(["📊 Genel", "📝 Bilgiler & Notlar", "📋 Ödevler", "📁 Projeler", "📝 Sınavlar", "🤖 Yapay Zeka"])
+        total = len(all_students)
+        classes = set(s.class_name for s in all_students if s.class_name)
+        if total > 0:
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Toplam Öğrenci", total)
+            col2.metric("Sınıf Sayısı", len(classes))
+            pending_hw = sum(1 for s in all_students for hw in s.homeworks if hw.status in ("pending", "late"))
+            col3.metric("Bekleyen Ödev", pending_hw)
+
+        st.divider()
+        st.subheader("📬 Yaklaşan Ödev Hatırlatmaları")
+        alerts = get_homework_alerts(all_students)
+        if alerts:
+            for a in alerts[:10]:
+                urgency_colors = {"OVERDUE": "#ff6b6b", "TODAY": "#ff922b", "SOON": "#ffd43b"}
+                color = urgency_colors.get(a["urgency"], "#4facfe")
+                days_str = "⚠️ Gecikmiş!" if a["days_left"] < 0 else f"⏰ {abs(a['days_left'])} gün kaldı" if a["days_left"] > 0 else "📣 Bugün teslim!"
+                st.markdown(f"""
+                <div class="homework-item" style="border-left-color: {color};">
+                    <b>{a['student'].name}</b> ({a['student'].class_name}) &nbsp;|&nbsp;
+                    <b>{a['homework'].title}</b> - {a['homework'].subject}
+                    <br><small>{days_str}</small>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.success("Yaklaşan ödev yok!")
+        st.stop()
+
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+    with col1:
+        st.markdown(f"### ✏️ {current.name}")
+        if current.class_name:
+            st.caption(f"Sınıf: {current.class_name}")
+    with col2:
+        st.metric("Ders Notu", f"{len(current.grades)} ders")
+    with col3:
+        st.metric("Ödev", f"{len(current.homeworks)}")
+    with col4:
+        st.metric("Sınav", f"{len(current.exams)}")
+
+    tabs = st.tabs(["📊 Genel", "📝 Bilgiler & Notlar", "📋 Ödevler", "📁 Projeler", "📝 Sınavlar", "🤖 Yapay Zeka"])
 
 # ===================================================================
 # TAB 0: DASHBOARD
@@ -941,3 +968,262 @@ GÖREV: Öğrencinin akademik durumunu detaylı analiz et. Güçlü yönleri, ge
     else:
         st.error("🔴 Ollama servisi kapalı. Terminalde 'ollama serve' çalıştırın.")
         st.info("Kurulum için: https://ollama.ai")
+
+
+# ===================================================================
+# NAV MODE: CLASS OVERVIEW
+# ===================================================================
+if nav_mode == "overview":
+    st.title("🏫 Sınıf Geneli Görünüm")
+
+    if not all_students:
+        st.info("Henüz kayıtlı öğrenci yok.")
+        st.stop()
+
+    classes = sorted(set(s.class_name for s in all_students if s.class_name))
+    selected_class = st.selectbox("Sınıf Seçin", ["Tümü"] + classes)
+
+    if selected_class == "Tümü":
+        filtered = all_students
+    else:
+        filtered = [s for s in all_students if s.class_name == selected_class]
+
+    st.markdown(f"**{len(filtered)} öğrenci**")
+    st.divider()
+
+    c1, c2, c3, c4 = st.columns(4)
+    total_hw = sum(len(s.homeworks) for s in filtered)
+    pending_hw = sum(1 for s in filtered for h in s.homeworks if h.status == "pending")
+    late_hw = sum(1 for s in filtered for h in s.homeworks if h.status == "late")
+    graded_hw = sum(1 for s in filtered for h in s.homeworks if h.status == "graded")
+    avg_all = []
+    for s in filtered:
+        if s.grades:
+            avg_all.extend([g.score for g in s.grades])
+    overall_avg = sum(avg_all) / len(avg_all) if avg_all else 0
+
+    c1.metric("Ders Not Ort.", f"{overall_avg:.1f}")
+    c2.metric("Toplam Ödev", total_hw)
+    c3.metric("Bekleyen", pending_hw)
+    c4.metric("Geciken", late_hw)
+
+    st.divider()
+    st.subheader("📬 Ödev Hatırlatmaları & Durumu")
+
+    alerts = get_homework_alerts(filtered)
+    if alerts:
+        for a in alerts[:20]:
+            urgency_styles = {
+                "OVERDUE": ("#ff6b6b", "⚠️ Gecikmiş!"),
+                "TODAY": ("#ff922b", "📣 Bugün teslim!"),
+                "SOON": ("#ffd43b", f"⏰ {abs(a['days_left'])} gün kaldı"),
+            }
+            color, label = urgency_styles.get(a["urgency"], ("#4facfe", f"{a['days_left']} gün"))
+            st.markdown(f"""
+            <div class="homework-item" style="border-left-color: {color};">
+                <div style="display: flex; justify-content: space-between;">
+                    <div>
+                        <b>{a['student'].name}</b> &nbsp;|&nbsp; {a['homework'].title}
+                        <span style="margin-left: 10px; font-size: 0.85em; color: #888;">{a['homework'].subject}</span>
+                    </div>
+                    <span class="status-badge" style="background: {color}; color: #000;">{label}</span>
+                </div>
+                <div style="font-size: 0.8em; color: #888; margin-top: 4px;">
+                    Teslim: {a['homework'].due_date or 'Belirtilmemiş'} | Durum: {HOMEWORK_STATUSES.get(a['homework'].status, a['homework'].status)}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.success("Yaklaşan ödev yok, her şey güncel!")
+
+    st.divider()
+    st.subheader("📊 Ders Bazlı Not Ortalamaları")
+
+    subject_stats = {}
+    for s in filtered:
+        for g in s.grades:
+            if g.subject not in subject_stats:
+                subject_stats[g.subject] = []
+            subject_stats[g.subject].append(g.score)
+
+    if subject_stats:
+        sub_cols = st.columns(min(len(subject_stats), 4))
+        for i, (subj, scores) in enumerate(sorted(subject_stats.items())):
+            avg_s = sum(scores) / len(scores)
+            color_s = "#51cf66" if avg_s >= 70 else "#ffd43b" if avg_s >= 50 else "#ff6b6b"
+            with sub_cols[i % 4]:
+                st.markdown(f"""
+                <div class="metric-card" style="border-left-color: {color_s}; text-align: center;">
+                    <div style="font-size: 0.85em;">{subj}</div>
+                    <div style="font-size: 1.6em; font-weight: bold; color: {color_s};">{avg_s:.1f}</div>
+                    <div style="font-size: 0.75em; color: #888;">{len(scores)} not</div>
+                </div>
+                """, unsafe_allow_html=True)
+    else:
+        st.info("Henüz ders notu girilmemiş.")
+
+    st.divider()
+    st.subheader("📋 Öğrenci Listesi")
+
+    for s in filtered:
+        avg_s = sum(g.score for g in s.grades) / len(s.grades) if s.grades else 0
+        pending_s = sum(1 for h in s.homeworks if h.status == "pending")
+        late_s = sum(1 for h in s.homeworks if h.status == "late")
+
+        with st.expander(f"{s.name} ({s.class_name}) — Ort: {avg_s:.1f if avg_s else '-'} | Bekleyen: {pending_s} | Geciken: {late_s}"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Ders Notları:**")
+                for g in s.grades:
+                    st.write(f"  {g.subject}: {g.score:.0f}")
+
+            with col2:
+                st.write("**Ödev Durumu:**")
+                for h in s.homeworks:
+                    status_icon = {"pending": "📋", "submitted": "📤", "graded": "✅", "late": "⏰"}.get(h.status, "•")
+                    st.write(f"  {status_icon} {h.title} - {h.subject} ({h.due_date or 'no date'})")
+
+            st.write("**Sınavlar:**")
+            for e in s.exams:
+                pct_e = (e.score / e.max_score * 100) if e.max_score else 0
+                st.write(f"  📝 {e.title} - {e.subject}: {e.score:.0f}/{e.max_score:.0f} ({pct_e:.0f}%)")
+
+
+# ===================================================================
+# NAV MODE: EXPORT
+# ===================================================================
+elif nav_mode == "export":
+    st.title("📥 Veri Dışa Aktarma")
+
+    if not all_students:
+        st.info("Henüz kayıtlı öğrenci yok.")
+        st.stop()
+
+    classes = sorted(set(s.class_name for s in all_students if s.class_name))
+    col_f, col_s, col_t = st.columns(3)
+
+    with col_f:
+        export_type = st.radio("Dışa Aktarma Türü", ["Tüm Öğrenciler", "Sınıf", "Tek Öğrenci"])
+
+    with col_s:
+        if export_type == "Sınıf":
+            target_class = st.selectbox("Sınıf Seç", ["Tümü"] + classes)
+        elif export_type == "Tek Öğrenci":
+            student_names = [f"{s.name} ({s.class_name})" for s in all_students]
+            selected_name = st.selectbox("Öğrenci Seç", student_names)
+            target_student = next((s for s in all_students if f"{s.name} ({s.class_name})" == selected_name), None)
+        else:
+            target_class = "Tümü"
+
+    with col_t:
+        export_format = st.radio("Format", ["CSV", "PDF"])
+
+    st.divider()
+
+    if export_type == "Tek Öğrenci" and target_student:
+        col_csv, col_pdf = st.columns(2)
+        with col_csv:
+            csv_data = CSVExporter.student_to_csv(target_student)
+            st.download_button("📊 CSV İndir", csv_data.encode("utf-8"),
+                file_name=f"{target_student.name}_{target_student.class_name}.csv",
+                mime="text/csv", use_container_width=True)
+
+        with col_pdf:
+            pdf_data = PDFExporter.student_to_pdf(target_student)
+            is_csv_fallback = len(pdf_data) > 50000 and b"Ad Soyad" in pdf_data
+            if is_csv_fallback:
+                st.download_button("📄 PDF İndir", pdf_data,
+                    file_name=f"{target_student.name}_{target_student.class_name}_report.csv",
+                    mime="text/csv", use_container_width=True)
+                st.caption("PDF kütüphanesi yüklenmedi, CSV olarak indirildi.")
+            else:
+                st.download_button("📄 PDF İndir", pdf_data,
+                    file_name=f"{target_student.name}_{target_student.class_name}.pdf",
+                    mime="application/pdf", use_container_width=True)
+
+        st.divider()
+        st.subheader(f"📋 {target_student.name} Özet")
+        c1, c2, c3, c4 = st.columns(4)
+        avg_e = sum(g.score for g in target_student.grades) / len(target_student.grades) if target_student.grades else 0
+        c1.metric("Not Ort.", f"{avg_e:.1f}")
+        c2.metric("Ödev", len(target_student.homeworks))
+        c3.metric("Proje", len(target_student.projects))
+        c4.metric("Sınav", len(target_student.exams))
+
+        st.subheader("📋 Tüm Ödevler")
+        for h in target_student.homeworks:
+            st.markdown(f"**{h.title}** — {h.subject} | {HOMEWORK_STATUSES.get(h.status, h.status)} | Teslim: {h.due_date or '-'}")
+
+    else:
+        if export_type == "Sınıf" and target_class != "Tümü":
+            target_students = [s for s in all_students if s.class_name == target_class]
+        else:
+            target_students = all_students
+
+        st.write(f"**{len(target_students)} öğrenci** seçildi.")
+
+        tab_list, tab_summary, tab_hw = st.tabs(["Liste", "Özet", "Ödev Raporu"])
+
+        with tab_list:
+            csv_all = CSVExporter.all_students_csv(target_students)
+            st.download_button("📊 Tüm Liste CSV", csv_all.encode("utf-8"),
+                file_name=f"ogrenci_liste_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv", use_container_width=True)
+            st.dataframe([{"Ad": s.name, "Sınıf": s.class_name, "Ders": len(s.grades),
+                          "Ödev": len(s.homeworks), "Proje": len(s.projects), "Sınav": len(s.exams)}
+                         for s in target_students], use_container_width=True)
+
+        with tab_summary:
+            csv_summary = CSVExporter.all_students_csv(target_students)
+            st.download_button("📊 Özet CSV", csv_summary.encode("utf-8"),
+                file_name=f"ogrenci_ozet_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv", use_container_width=True)
+
+            data_rows = []
+            for s in target_students:
+                avg = sum(g.score for g in s.grades) / len(s.grades) if s.grades else 0
+                pending = sum(1 for h in s.homeworks if h.status == "pending")
+                late = sum(1 for h in s.homeworks if h.status == "late")
+                graded = sum(1 for h in s.homeworks if h.status == "graded")
+                data_rows.append({
+                    "Ad": s.name,
+                    "Sınıf": s.class_name,
+                    "Not Ort.": f"{avg:.1f}",
+                    "Ders": len(s.grades),
+                    "Toplam Ödev": len(s.homeworks),
+                    "Bekleyen": pending,
+                    "Geciken": late,
+                    "Notlanan": graded,
+                })
+
+            st.dataframe(data_rows, use_container_width=True, hide_index=True)
+
+        with tab_hw:
+            csv_hw = CSVExporter.homework_overview_csv(target_students)
+            st.download_button("📋 Ödev Raporu CSV", csv_hw.encode("utf-8"),
+                file_name=f"odev_raporu_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv", use_container_width=True)
+
+            hw_rows = []
+            for s in target_students:
+                for h in s.homeworks:
+                    days_left = ""
+                    if h.due_date:
+                        try:
+                            due = datetime.strptime(h.due_date, "%Y-%m-%d")
+                            diff = (due - datetime.now()).days
+                            days_left = str(diff)
+                        except Exception:
+                            days_left = ""
+                    pct = f"{(h.grade/h.max_grade*100):.0f}%" if h.grade is not None else "-"
+                    hw_rows.append({
+                        "Öğrenci": s.name,
+                        "Sınıf": s.class_name,
+                        "Ödev": h.title,
+                        "Ders": h.subject,
+                        "Teslim": h.due_date or "-",
+                        "Durum": HOMEWORK_STATUSES.get(h.status, h.status),
+                        "Not": f"{h.grade:.0f}" if h.grade is not None else "-",
+                        "Gün": days_left,
+                    })
+            st.dataframe(hw_rows, use_container_width=True, hide_index=True)
