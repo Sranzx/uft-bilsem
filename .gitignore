@@ -1,5 +1,6 @@
 /logs/
 /student_data/
+/.idea/
 __pycache__/
 *.pyc
 venv/
