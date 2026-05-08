@@ -57,12 +57,12 @@ def list_students():
             with col1:
                 if st.button(f"Bu Öğrenciyi Seç", key=f"select_{student['id']}"):
                     st.session_state.current_student_id = student['id']
-                    st.experimental_rerun()
+                    st.rerun()
             with col2:
                 if st.button(f"Sil", key=f"delete_{student['id']}"):
                     if core.delete_student(student['id']):
                         st.success("Öğrenci silindi!")
-                        st.experimental_rerun()
+                        st.rerun()
                     else:
                         st.error("Silme işlemi başarısız!")
 
@@ -88,7 +88,7 @@ def add_student():
             if core.save(student):
                 st.success(f"Öğrenci başarıyla eklendi! ID: {student['id']}")
                 # Clear form
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("Öğrenci eklenirken bir hata oluştu!")
 
@@ -117,7 +117,7 @@ def search_student():
                 
                 if st.button(f"Bu Öğrenciyi Seç", key=f"select_search_{student['id']}"):
                     st.session_state.current_student_id = student['id']
-                    st.experimental_rerun()
+                    st.rerun()
 
 if __name__ == "__main__":
     main()
